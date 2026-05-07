@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>arXiv Survey Browser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #fff;
+    --border: #e3e3e6;
+    --muted: #6b7280;
+    --text: #1f2937;
+    --accent: #2563eb;
+    --accent-bg: #eff6ff;
+    --tag-bg: #f3f4f6;
+    --warn: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+  header { padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; position: sticky; top: 0; z-index: 10; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .info { color: var(--muted); font-size: 12px; }
+  header label { font-size: 12px; color: var(--muted); cursor: pointer; }
+  header input[type=file] { font-size: 12px; }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 50px); }
+  aside { background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; max-height: calc(100vh - 50px); position: sticky; top: 50px; }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+  aside h2:first-child { margin-top: 0; }
+  aside input[type=search], aside input[type=number], aside select { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
+  aside .checks { max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; background: #fff; }
+  aside .checks label { display: block; font-size: 12px; padding: 1px 0; cursor: pointer; }
+  aside .row { display: flex; gap: 6px; }
+  aside .row > * { flex: 1; }
+  aside .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  aside button { width: 100%; padding: 6px; font-size: 12px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
+  aside button:hover { background: var(--tag-bg); }
+
+  main { padding: 16px 20px; }
+  .summary { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #f9fafb; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sort-asc::after { content: " ▲"; color: var(--accent); }
+  th.sort-desc::after { content: " ▼"; color: var(--accent); }
+  tbody tr.row { cursor: pointer; }
+  tbody tr.row:hover { background: var(--accent-bg); }
+  tbody tr.detail td { background: #fcfcfd; padding: 14px 18px; border-top: none; }
+  td.title-cell { max-width: 480px; }
+  td.title-cell .title { font-weight: 500; }
+  td.title-cell .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--tag-bg); color: var(--text); margin-right: 4px; white-space: nowrap; }
+  .tag.primary { background: #dbeafe; color: #1e40af; }
+  .tag.track-main { background: #dcfce7; color: #166534; }
+  .tag.track-findings { background: #fef3c7; color: #92400e; }
+  .tag.track-workshop { background: #ede9fe; color: #5b21b6; }
+  .tag.track-other, .tag.track-unknown { background: #f3f4f6; color: #4b5563; }
+  .tag.cat { background: #e0e7ff; color: #3730a3; }
+  .tag.modality { background: #fce7f3; color: #9d174d; }
+
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .detail-grid { display: grid; grid-template-columns: 100px 1fr; gap: 4px 12px; }
+  .detail-grid .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+  .detail-grid .v { font-size: 13px; }
+  .abstract { line-height: 1.55; max-width: 900px; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>arXiv Survey</h1>
+  <div class="info" id="info">no data loaded</div>
+  <label style="margin-left:auto">
+    load CSV: <input type="file" id="filepick" accept=".csv">
+  </label>
+</header>
+
+<div class="layout">
+<aside>
+  <h2>search</h2>
+  <input type="search" id="q" placeholder="title / abstract / keywords">
+
+  <h2>cvpr 2026 only</h2>
+  <label class="toggle"><input type="checkbox" id="cvpr2026only" checked> exclude no/unsure</label>
+
+  <h2>track</h2>
+  <div class="checks" id="track-checks"></div>
+
+  <h2>task_primary</h2>
+  <div class="checks" id="task-checks"></div>
+
+  <h2>modality</h2>
+  <div class="checks" id="modality-checks"></div>
+
+  <h2>repo</h2>
+  <label class="toggle"><input type="checkbox" id="hasrepo"> has repo url</label>
+
+  <h2>authors</h2>
+  <div class="row">
+    <input type="number" id="amin" placeholder="min" min="1">
+    <input type="number" id="amax" placeholder="max" min="1">
+  </div>
+
+  <h2>sort</h2>
+  <select id="sort">
+    <option value="published-desc">published (newest)</option>
+    <option value="published-asc">published (oldest)</option>
+    <option value="author_count-asc">author_count (asc)</option>
+    <option value="author_count-desc">author_count (desc)</option>
+    <option value="title-asc">title (a-z)</option>
+  </select>
+
+  <h2>&nbsp;</h2>
+  <button id="reset">reset filters</button>
+</aside>
+
+<main>
+  <div class="summary" id="summary"></div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th data-sort="published">published</th>
+        <th>title</th>
+        <th>task</th>
+        <th>track</th>
+        <th>cat</th>
+        <th class="num">authors</th>
+        <th>links</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div id="empty" class="empty" style="display:none">no rows match the current filters.</div>
+</main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script>
+const DEFAULT_CSV = 'outputs/cvpr_100_tasks.csv';
+
+const state = {
+  rows: [],
+  filtered: [],
+  expandedId: null,
+  sort: 'published-desc',
+};
+
+const $ = id => document.getElementById(id);
+
+function parseCsv(text) {
+  return Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+}
+
+function unique(arr, key) {
+  const s = new Set();
+  arr.forEach(r => { const v = (r[key] || '').trim(); if (v) s.add(v); });
+  return [...s].sort();
+}
+
+function buildChecks(elId, values) {
+  const el = $(elId);
+  el.innerHTML = values.map(v =>
+    `<label><input type="checkbox" value="${v}"> ${v}</label>`
+  ).join('');
+  el.querySelectorAll('input').forEach(cb => cb.addEventListener('change', render));
+}
+
+function checkedValues(elId) {
+  return [...$(elId).querySelectorAll('input:checked')].map(cb => cb.value);
+}
+
+function applyFilters() {
+  const q = $('q').value.trim().toLowerCase();
+  const tracks = checkedValues('track-checks');
+  const tasks = checkedValues('task-checks');
+  const mods = checkedValues('modality-checks');
+  const hasRepo = $('hasrepo').checked;
+  const cvprOnly = $('cvpr2026only').checked;
+  const amin = parseInt($('amin').value, 10);
+  const amax = parseInt($('amax').value, 10);
+
+  return state.rows.filter(r => {
+    if (cvprOnly && r.is_cvpr2026 !== 'yes') return false;
+    if (tracks.length && !tracks.includes(r.track)) return false;
+    if (tasks.length && !tasks.includes(r.task_primary)) return false;
+    if (mods.length && !mods.includes(r.modality)) return false;
+    if (hasRepo && !r.repo_url) return false;
+    const ac = parseInt(r.author_count, 10) || 0;
+    if (!isNaN(amin) && ac < amin) return false;
+    if (!isNaN(amax) && ac > amax) return false;
+    if (q) {
+      const hay = [
+        r.title, r.summary, r.task_summary, r.task_keywords,
+        r.task_secondary, r.comment, r.notes, r.authors,
+      ].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function applySort(rows) {
+  const [k, dir] = state.sort.split('-');
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    let x = a[k] || '', y = b[k] || '';
+    if (k === 'author_count') { x = +x; y = +y; }
+    if (x < y) return -1 * sign;
+    if (x > y) return 1 * sign;
+    return 0;
+  });
+}
+
+function fmtDate(s) {
+  return (s || '').slice(0, 10);
+}
+
+function abstractLink(arxivId) {
+  return arxivId.replace('http://', 'https://');
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function rowHtml(r) {
+  const trackCls = `tag track-${r.track || 'unknown'}`;
+  const sec = r.task_secondary ? `<span class="meta"> +${escapeHtml(r.task_secondary)}</span>` : '';
+  const repo = r.repo_url
+    ? `<a href="${r.repo_url}" target="_blank" rel="noopener">repo</a>`
+    : '<span style="color:#cbd5e1">-</span>';
+  const pdf = r.pdf_url
+    ? `<a href="${r.pdf_url}" target="_blank" rel="noopener">pdf</a>`
+    : '';
+  const abs = r.id
+    ? `<a href="${abstractLink(r.id)}" target="_blank" rel="noopener">abs</a>`
+    : '';
+
+  return `<tr class="row" data-id="${escapeHtml(r.id)}">
+    <td><span style="font-variant-numeric:tabular-nums">${fmtDate(r.published)}</span></td>
+    <td class="title-cell">
+      <div class="title">${escapeHtml(r.title)}</div>
+      <div class="meta">${escapeHtml(r.task_summary || '')}</div>
+    </td>
+    <td><span class="tag primary">${escapeHtml(r.task_primary || '')}</span>${sec}</td>
+    <td><span class="${trackCls}">${escapeHtml(r.track || '')}</span></td>
+    <td><span class="tag cat">${escapeHtml(r.primary_category || '')}</span></td>
+    <td class="num">${escapeHtml(r.author_count || '')}</td>
+    <td>${abs} ${pdf} ${repo}</td>
+  </tr>`;
+}
+
+function detailHtml(r) {
+  const kw = r.task_keywords ? `<div><span class="tag modality">${escapeHtml(r.modality || '')}</span> ${escapeHtml(r.task_keywords).split(',').map(k => `<span class="tag">${k.trim()}</span>`).join('')}</div>` : '';
+  return `<tr class="detail" data-detail-for="${escapeHtml(r.id)}"><td colspan="7">
+    <div class="detail-grid">
+      <div class="k">authors</div><div class="v">${escapeHtml(r.authors || '')}</div>
+      <div class="k">categories</div><div class="v">${escapeHtml(r.categories || '')}</div>
+      <div class="k">keywords</div><div class="v">${kw}</div>
+      <div class="k">comment</div><div class="v">${escapeHtml(r.comment || '')} ${r.notes ? `<span class="tag" style="background:#fef3c7;color:#92400e">${escapeHtml(r.notes)}</span>` : ''}</div>
+      <div class="k">abstract</div><div class="v abstract">${escapeHtml(r.summary || '')}</div>
+    </div>
+  </td></tr>`;
+}
+
+function render() {
+  state.filtered = applySort(applyFilters());
+  const tbody = $('tbody');
+  if (state.filtered.length === 0) {
+    tbody.innerHTML = '';
+    $('empty').style.display = 'block';
+  } else {
+    $('empty').style.display = 'none';
+    tbody.innerHTML = state.filtered.map(r => {
+      const main = rowHtml(r);
+      return r.id === state.expandedId ? main + detailHtml(r) : main;
+    }).join('');
+  }
+  $('summary').textContent = `${state.filtered.length} of ${state.rows.length} rows`;
+
+  // sort indicators
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    const [k, d] = state.sort.split('-');
+    if (th.dataset.sort === k) th.classList.add(d === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+function bindRowClicks() {
+  $('tbody').addEventListener('click', e => {
+    const tr = e.target.closest('tr.row');
+    if (!tr) return;
+    if (e.target.tagName === 'A') return;
+    const id = tr.dataset.id;
+    state.expandedId = state.expandedId === id ? null : id;
+    render();
+  });
+}
+
+function loadData(rows) {
+  state.rows = rows;
+  $('info').textContent = `${rows.length} papers loaded`;
+  buildChecks('track-checks', unique(rows, 'track'));
+  buildChecks('task-checks', unique(rows, 'task_primary'));
+  buildChecks('modality-checks', unique(rows, 'modality'));
+  render();
+}
+
+async function loadDefault() {
+  try {
+    const res = await fetch(DEFAULT_CSV);
+    if (!res.ok) throw new Error('not found');
+    const text = await res.text();
+    loadData(parseCsv(text));
+  } catch (e) {
+    $('info').textContent = `default file (${DEFAULT_CSV}) not loaded — use the file picker →`;
+  }
+}
+
+function init() {
+  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax'].forEach(id => {
+    $(id).addEventListener('input', render);
+  });
+  $('sort').addEventListener('change', e => { state.sort = e.target.value; render(); });
+  $('reset').addEventListener('click', () => {
+    $('q').value = '';
+    $('cvpr2026only').checked = true;
+    $('hasrepo').checked = false;
+    $('amin').value = ''; $('amax').value = '';
+    document.querySelectorAll('aside .checks input').forEach(cb => cb.checked = false);
+    state.sort = 'published-desc';
+    $('sort').value = 'published-desc';
+    state.expandedId = null;
+    render();
+  });
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      const [ck, cd] = state.sort.split('-');
+      state.sort = (ck === k && cd === 'desc') ? `${k}-asc` : `${k}-desc`;
+      $('sort').value = state.sort;
+      render();
+    });
+  });
+  $('filepick').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => loadData(parseCsv(reader.result));
+    reader.readAsText(f);
+  });
+  bindRowClicks();
+  loadDefault();
+}
+
+init();
+</script>
+</body>
+</html>

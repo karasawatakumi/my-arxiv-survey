@@ -9,6 +9,7 @@ arxiv-survey2/
 ├── .env              # OPENAI_API_KEY を記載（リポジトリには含めない）
 ├── pyproject.toml    # uv プロジェクト定義
 ├── uv.lock
+├── index.html        # 静的フロント（CSVブラウザ）
 ├── scripts/
 │   ├── fetch_arxiv.py       # arXiv API から取得 → CSV
 │   ├── enrich_comments.py   # comment から学会情報を抽出
@@ -136,3 +137,23 @@ with open('outputs/arxiv_co_cvpr_100_enriched_tasks.csv') as f:
 ```
 
 `task_keywords` を grep すれば、固定タクソノミに無いトピック（visual localization、3d gaussian splatting 等）でも絞れる。
+
+## フロント（ブラウザ閲覧）
+
+`index.html` が静的フロント。CSVをロードしてフィルタ/ソート/詳細展開ができる。
+
+```bash
+uv run python -m http.server 8765
+# → http://localhost:8765/ をブラウザで開く
+```
+
+デフォルトで `outputs/cvpr_100_tasks.csv` を読み込む。別CSVに切り替えたい場合は右上の file picker から選択。
+
+機能:
+- 検索（title / abstract / task_summary / task_keywords / comment / authors を横断）
+- フィルタ: `is_cvpr2026=yes` only / `track` / `task_primary` / `modality` / has_repo / 著者数レンジ
+- ソート: published, author_count, title（列ヘッダクリックでも切替）
+- 行クリック → abstract / authors / categories / comment / keywords を展開
+- 各行から `abs / pdf / repo` リンク
+
+依存: PapaParse のみ（CDN）。ビルド不要。
