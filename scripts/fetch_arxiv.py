@@ -49,7 +49,7 @@ BACKOFF_BASE = 10.0      # seconds; multiplied by attempt index on retry
 DEFAULT_CATEGORIES = ["cs.CV", "cs.RO", "cs.AI", "cs.LG"]
 
 REPO_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)/\S+",
+    r"(?:https?://)?(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)/\S+",
     re.IGNORECASE,
 )
 
@@ -105,6 +105,8 @@ def parse_entries(xml_bytes: bytes) -> list[dict]:
         comment = " ".join((comment_el.text or "").split()) if comment_el is not None else ""
         m = REPO_URL_RE.search(comment)
         repo_url = m.group(0).rstrip(".,;:)\"'") if m else ""
+        if repo_url and not repo_url.lower().startswith(("http://", "https://")):
+            repo_url = "https://" + repo_url
         pdf_url = ""
         for link in e.findall("a:link", NS):
             if link.attrib.get("title") == "pdf":
