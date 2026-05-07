@@ -24,7 +24,7 @@ wheels = [
 ]
 
 [[package]]
-name = "arxiv-survey2"
+name = "arxiv-survey"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,11 +1,11 @@
-# arxiv-survey2
+# arxiv-survey
 
 arXiv論文のメタデータを取得し、GPTで `comment` から学会情報を、`title` + `abstract` からタスクカテゴリを抽出するパイプライン。
 
 ## ディレクトリ構成
 
 ```
-arxiv-survey2/
+arxiv-survey/
 ├── .env              # OPENAI_API_KEY を記載（リポジトリには含めない）
 ├── pyproject.toml    # uv プロジェクト定義
 ├── uv.lock
