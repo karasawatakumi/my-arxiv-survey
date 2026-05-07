@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 from openai import OpenAI, OpenAIError
@@ -139,6 +140,7 @@ def main() -> int:
     p.add_argument("-o", "--output", default=None, help="output CSV path (default: <input>_tasks.csv)")
     p.add_argument("--model", default="gpt-4o-mini", help="OpenAI model (default: gpt-4o-mini)")
     p.add_argument("--limit", type=int, default=None, help="only process first N rows (for testing)")
+    p.add_argument("--workers", type=int, default=5, help="concurrent OpenAI requests (default: 5)")
     args = p.parse_args()
 
     load_dotenv(os.path.join(REPO_ROOT, ".env"))
@@ -167,22 +169,38 @@ def main() -> int:
     client = OpenAI()
     new_fields = ["task_primary", "task_secondary", "task_keywords", "modality", "task_summary"]
 
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        fieldnames = list(rows[0].keys()) + new_fields if rows else new_fields
-        w = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
-        w.writeheader()
-        for i, row in enumerate(rows, 1):
+    def process(row):
+        try:
             cls = classify(client, args.model, row.get("title", ""), row.get("summary", ""))
             row["task_primary"] = cls["task_primary"]
             row["task_secondary"] = ", ".join(cls["task_secondary"])
             row["task_keywords"] = ", ".join(cls["task_keywords"])
             row["modality"] = cls["modality"]
             row["task_summary"] = cls["task_summary"]
-            w.writerow(row)
-            f.flush()
-            sec_str = f" (+{row['task_secondary']})" if row["task_secondary"] else ""
-            print(f"[{i}/{len(rows)}] {cls['task_primary']}{sec_str:20s} | {row.get('title','')[:60]}")
-    print(f"\nwrote {len(rows)} rows to {out_path}")
+        except Exception as e:
+            print(f"  ERROR on '{(row.get('title','') or '')[:50]}': {e}", file=sys.stderr)
+            row["task_primary"] = "other"
+            row["task_secondary"] = ""
+            row["task_keywords"] = ""
+            row["modality"] = "other"
+            row["task_summary"] = f"err:{type(e).__name__}"
+        return row
+
+    errors = 0
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        fieldnames = list(rows[0].keys()) + new_fields if rows else new_fields
+        w = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
+        w.writeheader()
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            for i, row in enumerate(ex.map(process, rows), 1):
+                w.writerow(row)
+                f.flush()
+                if row["task_summary"].startswith("err:"):
+                    errors += 1
+                if i % 25 == 0 or i == len(rows):
+                    sec_str = f" (+{row['task_secondary']})" if row["task_secondary"] else ""
+                    print(f"[{i}/{len(rows)}] {row['task_primary']}{sec_str} | {row.get('title','')[:60]}")
+    print(f"\nwrote {len(rows)} rows to {out_path}" + (f" ({errors} errors)" if errors else ""))
     return 0
 
 

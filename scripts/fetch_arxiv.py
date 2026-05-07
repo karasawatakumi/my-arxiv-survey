@@ -127,39 +127,42 @@ def parse_entries(xml_bytes: bytes) -> list[dict]:
     return entries
 
 
-def fetch_papers(keyword: str, n: int, primary_filter: list[str] | None = None) -> list[dict]:
+CSV_FIELDS = [
+    "id", "title", "authors", "author_count",
+    "primary_category", "categories", "comment", "repo_url",
+    "published", "updated", "summary", "pdf_url",
+]
+
+
+def iter_pages(keyword: str, n: int, primary_filter: list[str] | None = None):
+    """Yield (batch, written_so_far_after_batch, raw_start) per page.
+
+    Stops when n filtered rows accumulated, the API runs out, or MAX_TOTAL hit.
+    """
     if not (1 <= n <= MAX_TOTAL):
         raise ValueError(f"n must be in [1, {MAX_TOTAL}], got {n}")
-    results: list[dict] = []
+    written = 0
     start = 0
-    while len(results) < n and start < MAX_TOTAL:
+    while written < n and start < MAX_TOTAL:
         url = build_url(keyword, start, PAGE_SIZE)
         xml_bytes = fetch(url)
         entries = parse_entries(xml_bytes)
         if not entries:
-            break  # no more results from API
+            return  # no more results from API
         raw_count = len(entries)
         start += raw_count
         if primary_filter:
             entries = [e for e in entries if e["primary_category"] in primary_filter]
-        results.extend(entries)
+        # cap to remaining n
+        remaining = n - written
+        if len(entries) > remaining:
+            entries = entries[:remaining]
+        written += len(entries)
+        yield entries, written, start
         if raw_count < PAGE_SIZE:
-            break  # server has no more matches
-        if len(results) < n:
+            return  # server has no more matches
+        if written < n:
             time.sleep(REQUEST_DELAY)
-    return results[:n]
-
-
-def write_csv(rows: list[dict], path: str) -> None:
-    fields = [
-        "id", "title", "authors", "author_count",
-        "primary_category", "categories", "comment", "repo_url",
-        "published", "updated", "summary", "pdf_url",
-    ]
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields, quoting=csv.QUOTE_ALL)
-        w.writeheader()
-        w.writerows(rows)
 
 
 def build_query(user_query: str, categories: list[str]) -> str:
@@ -186,14 +189,28 @@ def main() -> int:
 
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", args.query).strip("_") or "query"
     out = args.output or os.path.join(DEFAULT_OUT_DIR, f"arxiv_{safe}_{args.n}.csv")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+
+    total = 0
     try:
-        rows = fetch_papers(full_query, args.n, primary_filter=categories or None)
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=CSV_FIELDS, quoting=csv.QUOTE_ALL)
+            w.writeheader()
+            f.flush()
+            for batch, written, raw_start in iter_pages(
+                full_query, args.n, primary_filter=categories or None
+            ):
+                w.writerows(batch)
+                f.flush()
+                total = written
+                print(f"  page done: +{len(batch)} rows  (written={written}, raw_seen={raw_start})", flush=True)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    write_csv(rows, out)
-    print(f"wrote {len(rows)} rows to {out}")
+    except KeyboardInterrupt:
+        print(f"\ninterrupted: kept {total} rows in {out}", file=sys.stderr)
+        return 130
+    print(f"wrote {total} rows to {out}")
     return 0
 
 

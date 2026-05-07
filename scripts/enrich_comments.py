@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 from openai import OpenAI, OpenAIError
@@ -96,6 +97,7 @@ def main() -> int:
     p.add_argument("-o", "--output", default=None, help="output CSV path (default: <input>_enriched.csv)")
     p.add_argument("--model", default="gpt-4o-mini", help="OpenAI model (default: gpt-4o-mini)")
     p.add_argument("--limit", type=int, default=None, help="only process first N rows (for testing)")
+    p.add_argument("--workers", type=int, default=5, help="concurrent OpenAI requests (default: 5)")
     args = p.parse_args()
 
     load_dotenv(os.path.join(REPO_ROOT, ".env"))
@@ -120,17 +122,29 @@ def main() -> int:
     client = OpenAI()
     new_fields = ["is_cvpr2026", "track", "accepted", "notes"]
 
+    def process(row):
+        try:
+            cls = classify(client, args.model, row.get("comment", ""))
+        except Exception as e:
+            print(f"  ERROR on '{(row.get('title','') or '')[:50]}': {e}", file=sys.stderr)
+            cls = {"is_cvpr2026": "unsure", "track": "unknown", "accepted": "unsure", "notes": f"err:{type(e).__name__}"}
+        row.update(cls)
+        return row
+
+    errors = 0
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         fieldnames = list(rows[0].keys()) + new_fields if rows else new_fields
         w = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
         w.writeheader()
-        for i, row in enumerate(rows, 1):
-            cls = classify(client, args.model, row.get("comment", ""))
-            row.update(cls)
-            w.writerow(row)
-            f.flush()
-            print(f"[{i}/{len(rows)}] cvpr2026={cls['is_cvpr2026']:6s} track={cls['track']:9s} accepted={cls['accepted']:6s} | {row.get('title','')[:60]}")
-    print(f"\nwrote {len(rows)} rows to {out_path}")
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            for i, row in enumerate(ex.map(process, rows), 1):
+                w.writerow(row)
+                f.flush()
+                if (row.get("notes") or "").startswith("err:"):
+                    errors += 1
+                if i % 25 == 0 or i == len(rows):
+                    print(f"[{i}/{len(rows)}] cvpr2026={row['is_cvpr2026']:6s} track={row['track']:9s} | {row.get('title','')[:60]}")
+    print(f"\nwrote {len(rows)} rows to {out_path}" + (f" ({errors} errors)" if errors else ""))
     return 0
 
 
