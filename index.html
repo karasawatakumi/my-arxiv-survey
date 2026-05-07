@@ -64,6 +64,16 @@
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
+  .fav-btn { background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 16px; line-height: 1; color: #d1d5db; }
+  .fav-btn:hover { color: #f59e0b; }
+  .fav-btn.on { color: #f59e0b; }
+  th.fav-col, td.fav-col { width: 28px; text-align: center; padding-left: 6px; padding-right: 0; }
+
+  header .fav-controls { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+  header .fav-controls button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
+  header .fav-controls button:hover { background: var(--tag-bg); }
+  header .fav-count { color: #f59e0b; font-weight: 500; }
+
   .detail-grid { display: grid; grid-template-columns: 100px 1fr; gap: 4px 12px; }
   .detail-grid .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
   .detail-grid .v { font-size: 13px; }
@@ -75,7 +85,13 @@
 <header>
   <h1>arXiv Survey</h1>
   <div class="info" id="info">no data loaded</div>
-  <label style="margin-left:auto">
+  <div class="fav-controls" style="margin-left:auto">
+    <span class="fav-count" id="fav-count">★ 0</span>
+    <button id="export-favs" title="Download favorites as JSON">export</button>
+    <button id="import-favs-btn" title="Import favorites from JSON (merges)">import</button>
+    <input type="file" id="import-favs" accept=".json" style="display:none">
+  </div>
+  <label>
     load CSV: <input type="file" id="filepick" accept=".csv">
   </label>
 </header>
@@ -84,6 +100,9 @@
 <aside>
   <h2>search</h2>
   <input type="search" id="q" placeholder="title / abstract / keywords">
+
+  <h2>favorites</h2>
+  <label class="toggle"><input type="checkbox" id="favsonly"> ★ favorites only</label>
 
   <h2>cvpr 2026 only</h2>
   <label class="toggle"><input type="checkbox" id="cvpr2026only" checked> exclude no/unsure</label>
@@ -124,6 +143,7 @@
   <table id="tbl">
     <thead>
       <tr>
+        <th class="fav-col"></th>
         <th data-sort="published">published</th>
         <th>title</th>
         <th>task</th>
@@ -142,13 +162,44 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script>
 const DEFAULT_CSV = 'outputs/cvpr_100_tasks.csv';
+const FAV_KEY = 'arxiv-survey:favorites';
 
 const state = {
   rows: [],
   filtered: [],
   expandedId: null,
   sort: 'published-desc',
+  favs: new Set(),
 };
+
+function normId(id) {
+  return (id || '').trim().replace(/v\d+$/, '');
+}
+
+function loadFavs() {
+  try {
+    state.favs = new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]'));
+  } catch (e) {
+    state.favs = new Set();
+  }
+}
+
+function saveFavs() {
+  localStorage.setItem(FAV_KEY, JSON.stringify([...state.favs]));
+}
+
+function isFav(r) { return state.favs.has(normId(r.id)); }
+
+function toggleFav(r) {
+  const k = normId(r.id);
+  if (state.favs.has(k)) state.favs.delete(k); else state.favs.add(k);
+  saveFavs();
+  updateFavCount();
+}
+
+function updateFavCount() {
+  $('fav-count').textContent = `★ ${state.favs.size}`;
+}
 
 const $ = id => document.getElementById(id);
 
@@ -180,11 +231,13 @@ function applyFilters() {
   const tasks = checkedValues('task-checks');
   const mods = checkedValues('modality-checks');
   const hasRepo = $('hasrepo').checked;
+  const favsOnly = $('favsonly').checked;
   const cvprOnly = $('cvpr2026only').checked;
   const amin = parseInt($('amin').value, 10);
   const amax = parseInt($('amax').value, 10);
 
   return state.rows.filter(r => {
+    if (favsOnly && !isFav(r)) return false;
     if (cvprOnly && r.is_cvpr2026 !== 'yes') return false;
     if (tracks.length && !tracks.includes(r.track)) return false;
     if (tasks.length && !tasks.includes(r.task_primary)) return false;
@@ -242,8 +295,11 @@ function rowHtml(r) {
   const abs = r.id
     ? `<a href="${abstractLink(r.id)}" target="_blank" rel="noopener">abs</a>`
     : '';
+  const favCls = isFav(r) ? 'fav-btn on' : 'fav-btn';
+  const favChar = isFav(r) ? '★' : '☆';
 
   return `<tr class="row" data-id="${escapeHtml(r.id)}">
+    <td class="fav-col"><button class="${favCls}" data-fav="${escapeHtml(r.id)}" title="toggle favorite">${favChar}</button></td>
     <td><span style="font-variant-numeric:tabular-nums">${fmtDate(r.published)}</span></td>
     <td class="title-cell">
       <div class="title">${escapeHtml(r.title)}</div>
@@ -259,7 +315,7 @@ function rowHtml(r) {
 
 function detailHtml(r) {
   const kw = r.task_keywords ? `<div><span class="tag modality">${escapeHtml(r.modality || '')}</span> ${escapeHtml(r.task_keywords).split(',').map(k => `<span class="tag">${k.trim()}</span>`).join('')}</div>` : '';
-  return `<tr class="detail" data-detail-for="${escapeHtml(r.id)}"><td colspan="7">
+  return `<tr class="detail" data-detail-for="${escapeHtml(r.id)}"><td colspan="8">
     <div class="detail-grid">
       <div class="k">authors</div><div class="v">${escapeHtml(r.authors || '')}</div>
       <div class="k">categories</div><div class="v">${escapeHtml(r.categories || '')}</div>
@@ -295,6 +351,13 @@ function render() {
 
 function bindRowClicks() {
   $('tbody').addEventListener('click', e => {
+    const favBtn = e.target.closest('.fav-btn');
+    if (favBtn) {
+      const id = favBtn.dataset.fav;
+      const r = state.rows.find(row => row.id === id);
+      if (r) { toggleFav(r); render(); }
+      return;
+    }
     const tr = e.target.closest('tr.row');
     if (!tr) return;
     if (e.target.tagName === 'A') return;
@@ -324,8 +387,46 @@ async function loadDefault() {
   }
 }
 
+function exportFavs() {
+  const data = {
+    type: 'arxiv-survey-favorites',
+    exported_at: new Date().toISOString(),
+    favorites: [...state.favs],
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `favorites-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importFavs(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const incoming = Array.isArray(data) ? data : data.favorites;
+      if (!Array.isArray(incoming)) throw new Error('invalid format');
+      const before = state.favs.size;
+      incoming.forEach(id => state.favs.add(id));
+      saveFavs();
+      updateFavCount();
+      render();
+      const added = state.favs.size - before;
+      alert(`merged ${added} new favorites (total: ${state.favs.size})`);
+    } catch (e) {
+      alert('failed to import: ' + e.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
 function init() {
-  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax'].forEach(id => {
+  loadFavs();
+  updateFavCount();
+  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax', 'favsonly'].forEach(id => {
     $(id).addEventListener('input', render);
   });
   $('sort').addEventListener('change', e => { state.sort = e.target.value; render(); });
@@ -333,12 +434,19 @@ function init() {
     $('q').value = '';
     $('cvpr2026only').checked = true;
     $('hasrepo').checked = false;
+    $('favsonly').checked = false;
     $('amin').value = ''; $('amax').value = '';
     document.querySelectorAll('aside .checks input').forEach(cb => cb.checked = false);
     state.sort = 'published-desc';
     $('sort').value = 'published-desc';
     state.expandedId = null;
     render();
+  });
+  $('export-favs').addEventListener('click', exportFavs);
+  $('import-favs-btn').addEventListener('click', () => $('import-favs').click());
+  $('import-favs').addEventListener('change', e => {
+    if (e.target.files[0]) importFavs(e.target.files[0]);
+    e.target.value = '';
   });
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
