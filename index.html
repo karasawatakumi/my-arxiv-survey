@@ -30,10 +30,14 @@
   aside h2:first-child { margin-top: 0; }
   aside input[type=search], aside input[type=number], aside select { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
   aside .checks { max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; background: #fff; }
-  aside .checks label { display: block; font-size: 12px; padding: 1px 0; cursor: pointer; }
+  aside .checks label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 1px 0; cursor: pointer; gap: 4px; }
+  aside .checks label .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  aside .checks label.zero { color: #cbd5e1; }
+  aside .checks label.zero .count { color: #cbd5e1; }
   aside .row { display: flex; gap: 6px; }
   aside .row > * { flex: 1; }
   aside .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  aside .toggle .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; margin-left: auto; }
   aside button { width: 100%; padding: 6px; font-size: 12px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
   aside button:hover { background: var(--tag-bg); }
 
@@ -117,7 +121,7 @@
   <div class="checks" id="modality-checks"></div>
 
   <h2>repo</h2>
-  <label class="toggle"><input type="checkbox" id="hasrepo"> has repo url</label>
+  <label class="toggle"><input type="checkbox" id="hasrepo"> has repo url<span class="count" id="hasrepo-count"></span></label>
 
   <h2>authors</h2>
   <div class="row">
@@ -216,7 +220,7 @@ function unique(arr, key) {
 function buildChecks(elId, values) {
   const el = $(elId);
   el.innerHTML = values.map(v =>
-    `<label><input type="checkbox" value="${v}"> ${v}</label>`
+    `<label data-value="${escapeHtml(v)}"><span><input type="checkbox" value="${escapeHtml(v)}"> ${escapeHtml(v)}</span><span class="count"></span></label>`
   ).join('');
   el.querySelectorAll('input').forEach(cb => cb.addEventListener('change', render));
 }
@@ -225,12 +229,12 @@ function checkedValues(elId) {
   return [...$(elId).querySelectorAll('input:checked')].map(cb => cb.value);
 }
 
-function applyFilters() {
+function applyFilters(skip = null) {
   const q = $('q').value.trim().toLowerCase();
-  const tracks = checkedValues('track-checks');
-  const tasks = checkedValues('task-checks');
-  const mods = checkedValues('modality-checks');
-  const hasRepo = $('hasrepo').checked;
+  const tracks = skip === 'track' ? [] : checkedValues('track-checks');
+  const tasks = skip === 'task' ? [] : checkedValues('task-checks');
+  const mods = skip === 'modality' ? [] : checkedValues('modality-checks');
+  const hasRepo = skip === 'hasrepo' ? false : $('hasrepo').checked;
   const favsOnly = $('favsonly').checked;
   const cvprOnly = $('cvpr2026only').checked;
   const amin = parseInt($('amin').value, 10);
@@ -255,6 +259,31 @@ function applyFilters() {
     }
     return true;
   });
+}
+
+function updateFacetCounts() {
+  const groups = [
+    { skip: 'track',    elId: 'track-checks',    key: 'track' },
+    { skip: 'task',     elId: 'task-checks',     key: 'task_primary' },
+    { skip: 'modality', elId: 'modality-checks', key: 'modality' },
+  ];
+  for (const g of groups) {
+    const filtered = applyFilters(g.skip);
+    const counts = new Map();
+    for (const r of filtered) {
+      const v = (r[g.key] || '').trim();
+      if (v) counts.set(v, (counts.get(v) || 0) + 1);
+    }
+    document.querySelectorAll(`#${g.elId} label`).forEach(lbl => {
+      const v = lbl.dataset.value;
+      const c = counts.get(v) || 0;
+      lbl.querySelector('.count').textContent = c;
+      lbl.classList.toggle('zero', c === 0);
+    });
+  }
+  // toggle filters: count of rows that would pass if this toggle were on
+  const repoBase = applyFilters('hasrepo');
+  $('hasrepo-count').textContent = repoBase.filter(r => r.repo_url).length;
 }
 
 function applySort(rows) {
@@ -328,6 +357,7 @@ function detailHtml(r) {
 
 function render() {
   state.filtered = applySort(applyFilters());
+  updateFacetCounts();
   const tbody = $('tbody');
   if (state.filtered.length === 0) {
     tbody.innerHTML = '';
