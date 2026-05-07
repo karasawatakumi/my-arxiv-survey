@@ -2,6 +2,9 @@
 
 arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類」を抽出して、ブラウザで閲覧/フィルタするパイプライン。
 
+<img width="3450" height="1930" alt="image" src="https://github.com/user-attachments/assets/3935e8d0-870b-4c33-979c-ffbbdd21a435" />
+
+
 ## クイックスタート
 
 ```bash
