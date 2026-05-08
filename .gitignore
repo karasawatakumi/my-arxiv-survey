@@ -3,5 +3,8 @@
 __pycache__/
 *.pyc
 .venv/
-outputs/
 .claude/
+
+# outputs are gitignored by default; whitelist the published CSV
+outputs/*
+!outputs/cvpr2026_tasks.csv

@@ -4,6 +4,9 @@ arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類
 
 <img width="3450" height="1930" alt="image" src="https://github.com/user-attachments/assets/3935e8d0-870b-4c33-979c-ffbbdd21a435" />
 
+**🌐 公開ビューア: https://karasawatakumi.github.io/my-arxiv-survey/**
+
+`outputs/cvpr2026_tasks.csv` をそのまま読み込みます。お気に入り(★)はブラウザのlocalStorageに保存されるので、別端末で開く時は「export → import」で同期可能。
 
 ## クイックスタート
 
@@ -153,6 +156,8 @@ CVPR 2026 全件 ≒ 約1500件取得時の実績:
 fetchはarXiv API側のIP単位レート制限のため並列化不可。enrich側は `--workers 10` 等にしてさらに短縮可能（OpenAI tier1なら余裕）。
 
 ## フロント（index.html）
+
+普段は **公開URL https://karasawatakumi.github.io/my-arxiv-survey/** にブックマークを置けば十分。ローカルで動かす場合:
 
 ```bash
 uv run python -m http.server 8765   # → http://localhost:8765/
