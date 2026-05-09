@@ -64,6 +64,8 @@
   .tag.cat { background: #e0e7ff; color: #3730a3; }
   .tag.modality { background: #fce7f3; color: #9d174d; }
 
+  .ai-badge { display: inline-block; font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #ede9fe; color: #5b21b6; letter-spacing: 0.05em; font-weight: 600; margin-left: 4px; vertical-align: middle; }
+
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -106,7 +108,7 @@
   <input type="search" id="q" placeholder="title / abstract / keywords">
 
   <h2>favorites</h2>
-  <label class="toggle"><input type="checkbox" id="favsonly"> ★ favorites only</label>
+  <label class="toggle"><input type="checkbox" id="favsonly"> ★ favorites only<span class="count" id="favsonly-count"></span></label>
 
   <h2>cvpr 2026 only</h2>
   <label class="toggle"><input type="checkbox" id="cvpr2026only" checked> exclude no/unsure</label>
@@ -150,8 +152,8 @@
         <th class="fav-col"></th>
         <th data-sort="published">published</th>
         <th>title</th>
-        <th>task</th>
-        <th>track</th>
+        <th title="GPTによる自動分類">task<span class="ai-badge">AI</span></th>
+        <th title="GPTによる自動分類">track<span class="ai-badge">AI</span></th>
         <th>cat</th>
         <th class="num">authors</th>
         <th>links</th>
@@ -235,7 +237,7 @@ function applyFilters(skip = null) {
   const tasks = skip === 'task' ? [] : checkedValues('task-checks');
   const mods = skip === 'modality' ? [] : checkedValues('modality-checks');
   const hasRepo = skip === 'hasrepo' ? false : $('hasrepo').checked;
-  const favsOnly = $('favsonly').checked;
+  const favsOnly = skip === 'favsonly' ? false : $('favsonly').checked;
   const cvprOnly = $('cvpr2026only').checked;
   const amin = parseInt($('amin').value, 10);
   const amax = parseInt($('amax').value, 10);
@@ -284,6 +286,8 @@ function updateFacetCounts() {
   // toggle filters: count of rows that would pass if this toggle were on
   const repoBase = applyFilters('hasrepo');
   $('hasrepo-count').textContent = repoBase.filter(r => r.repo_url).length;
+  const favBase = applyFilters('favsonly');
+  $('favsonly-count').textContent = favBase.filter(r => isFav(r)).length;
 }
 
 function applySort(rows) {
