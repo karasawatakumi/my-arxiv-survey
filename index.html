@@ -180,6 +180,7 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script>
 const DEFAULT_CSV = 'outputs/cvpr2026_tasks.csv';
+const DEFAULT_META = 'outputs/cvpr2026_tasks.meta.json';
 const FAV_KEY = 'arxiv-survey:favorites';
 const NOTES_KEY = 'arxiv-survey:notes';
 
@@ -485,21 +486,50 @@ function bindRowClicks() {
   });
 }
 
-function loadData(rows) {
+function renderInfo(rows, meta) {
+  const el = $('info');
+  if (meta) {
+    const through = meta.latest_published || '?';
+    const fetched = (meta.last_fetched_at || '').slice(0, 10);
+    el.innerHTML = `📅 through <b>${escapeHtml(through)}</b> · ${rows} papers · fetched ${escapeHtml(fetched)}`;
+    el.title = [
+      `query:            ${meta.query || '(unknown)'}`,
+      `latest published: ${meta.latest_published || '-'}`,
+      `latest updated:   ${meta.latest_updated || '-'}`,
+      `last fetched:     ${meta.last_fetched_at || '-'}`,
+      `total rows:       ${meta.total_rows}`,
+    ].join('\n');
+  } else {
+    el.textContent = `${rows} papers loaded`;
+    el.title = '';
+  }
+}
+
+function loadData(rows, meta = null) {
   state.rows = rows;
-  $('info').textContent = `${rows.length} papers loaded`;
+  renderInfo(rows.length, meta);
   buildChecks('track-checks', unique(rows, 'track'));
   buildChecks('task-checks', unique(rows, 'task_primary'));
   buildChecks('modality-checks', unique(rows, 'modality'));
   render();
 }
 
+async function fetchMeta() {
+  try {
+    const res = await fetch(DEFAULT_META);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
 async function loadDefault() {
   try {
-    const res = await fetch(DEFAULT_CSV);
-    if (!res.ok) throw new Error('not found');
-    const text = await res.text();
-    loadData(parseCsv(text));
+    const [csvRes, meta] = await Promise.all([fetch(DEFAULT_CSV), fetchMeta()]);
+    if (!csvRes.ok) throw new Error('not found');
+    const text = await csvRes.text();
+    loadData(parseCsv(text), meta);
   } catch (e) {
     $('info').textContent = `default file (${DEFAULT_CSV}) not loaded — use the file picker →`;
   }

@@ -7,6 +7,10 @@ Usage:
     python fetch_arxiv.py "ti:transformer" 20 --categories cs.CL,cs.LG
     python fetch_arxiv.py "co:neurips" 30 --categories ""   # disable category filter
 
+    # incremental update: only entries newer than max(existing.updated)
+    python fetch_arxiv.py "co:cvpr AND co:2026" 5000 \
+        --update outputs/cvpr2026_tasks.csv -o outputs/_update_raw.csv
+
 The query is passed to arXiv's search_query, AND-combined with the category
 filter (default: cs.CV, cs.RO, cs.AI, cs.LG). Field prefixes:
     ti  title       au  author       abs abstract     co  comment
@@ -54,12 +58,12 @@ REPO_URL_RE = re.compile(
 )
 
 
-def build_url(query: str, start: int, max_results: int) -> str:
+def build_url(query: str, start: int, max_results: int, sort_by: str = "submittedDate") -> str:
     params = {
         "search_query": query,
         "start": start,
         "max_results": max_results,
-        "sortBy": "submittedDate",
+        "sortBy": sort_by,
         "sortOrder": "descending",
     }
     return f"{API_URL}?{urllib.parse.urlencode(params)}"
@@ -77,7 +81,19 @@ def fetch(url: str) -> bytes:
             # 429 / 5xx: wait longer; 4xx else: don't retry
             if e.code == 429 or 500 <= e.code < 600:
                 if attempt < MAX_RETRIES:
-                    time.sleep(BACKOFF_BASE * attempt)
+                    # arXiv's IP-level 429 cooldown can stay engaged for 2-3 min.
+                    # Use exponential backoff for 429 specifically (60/120/240/480s)
+                    # so a total ~15min retry window covers all observed cases.
+                    if e.code == 429:
+                        delay = 60.0 * (2 ** (attempt - 1))
+                    else:
+                        delay = BACKOFF_BASE * attempt
+                    print(
+                        f"  HTTP {e.code} (attempt {attempt}/{MAX_RETRIES}), "
+                        f"retrying in {delay:.0f}s...",
+                        flush=True,
+                    )
+                    time.sleep(delay)
                     continue
             raise RuntimeError(f"HTTP {e.code} on {url}") from e
         except Exception as e:  # noqa: BLE001
@@ -136,23 +152,39 @@ CSV_FIELDS = [
 ]
 
 
-def iter_pages(keyword: str, n: int, primary_filter: list[str] | None = None):
+def iter_pages(
+    keyword: str,
+    n: int,
+    primary_filter: list[str] | None = None,
+    sort_by: str = "submittedDate",
+    stop_if_updated_le: str | None = None,
+):
     """Yield (batch, written_so_far_after_batch, raw_start) per page.
 
     Stops when n filtered rows accumulated, the API runs out, or MAX_TOTAL hit.
+    If stop_if_updated_le is set, also stops when any entry's `updated` is
+    <= that ISO timestamp (entries beyond that boundary are discarded). Pair with
+    sort_by="lastUpdatedDate" so the boundary is monotonic across pages.
     """
     if not (1 <= n <= MAX_TOTAL):
         raise ValueError(f"n must be in [1, {MAX_TOTAL}], got {n}")
     written = 0
     start = 0
     while written < n and start < MAX_TOTAL:
-        url = build_url(keyword, start, PAGE_SIZE)
+        url = build_url(keyword, start, PAGE_SIZE, sort_by=sort_by)
         xml_bytes = fetch(url)
         entries = parse_entries(xml_bytes)
         if not entries:
             return  # no more results from API
         raw_count = len(entries)
         start += raw_count
+        boundary_hit = False
+        if stop_if_updated_le:
+            for i, e in enumerate(entries):
+                if e["updated"] <= stop_if_updated_le:
+                    entries = entries[:i]
+                    boundary_hit = True
+                    break
         if primary_filter:
             entries = [e for e in entries if e["primary_category"] in primary_filter]
         # cap to remaining n
@@ -161,8 +193,8 @@ def iter_pages(keyword: str, n: int, primary_filter: list[str] | None = None):
             entries = entries[:remaining]
         written += len(entries)
         yield entries, written, start
-        if raw_count < PAGE_SIZE:
-            return  # server has no more matches
+        if boundary_hit or raw_count < PAGE_SIZE:
+            return  # past the boundary, or server has no more matches
         if written < n:
             time.sleep(REQUEST_DELAY)
 
@@ -184,10 +216,35 @@ def main() -> int:
         default=",".join(DEFAULT_CATEGORIES),
         help=f'comma-separated arXiv categories AND-combined with query (default: {",".join(DEFAULT_CATEGORIES)}). Pass "" to disable.',
     )
+    p.add_argument(
+        "--update",
+        default=None,
+        metavar="EXISTING_CSV",
+        help=(
+            "incremental mode: read EXISTING_CSV, fetch only entries with "
+            "`updated` > max(existing.updated) using sortBy=lastUpdatedDate. "
+            "`n` becomes an upper cap (default 5000 is plenty for daily runs). "
+            "Output CSV contains both new entries and revised existing ones."
+        ),
+    )
     args = p.parse_args()
 
     categories = [c.strip() for c in args.categories.split(",") if c.strip()]
     full_query = build_query(args.query, categories)
+
+    sort_by = "submittedDate"
+    stop_if_updated_le: str | None = None
+    if args.update:
+        with open(args.update, newline="", encoding="utf-8") as f:
+            existing = list(csv.DictReader(f))
+        updates = [(r.get("updated") or "").strip() for r in existing]
+        updates = [u for u in updates if u]
+        if not updates:
+            print(f"error: --update file {args.update} has no 'updated' values", file=sys.stderr)
+            return 2
+        stop_if_updated_le = max(updates)
+        sort_by = "lastUpdatedDate"
+        print(f"update mode: existing rows={len(existing)}, boundary updated>{stop_if_updated_le}", flush=True)
 
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", args.query).strip("_") or "query"
     out = args.output or os.path.join(DEFAULT_OUT_DIR, f"arxiv_{safe}_{args.n}.csv")
@@ -200,7 +257,11 @@ def main() -> int:
             w.writeheader()
             f.flush()
             for batch, written, raw_start in iter_pages(
-                full_query, args.n, primary_filter=categories or None
+                full_query,
+                args.n,
+                primary_filter=categories or None,
+                sort_by=sort_by,
+                stop_if_updated_le=stop_if_updated_le,
             ):
                 w.writerows(batch)
                 f.flush()

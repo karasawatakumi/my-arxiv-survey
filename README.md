@@ -6,7 +6,7 @@ arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類
 
 **🌐 公開ビューア: https://karasawatakumi.github.io/my-arxiv-survey/**
 
-`outputs/cvpr2026_tasks.csv` をそのまま読み込みます。お気に入り(★)はブラウザのlocalStorageに保存されるので、別端末で開く時は「export → import」で同期可能。
+`outputs/cvpr2026_tasks.csv` をそのまま読み込みます。お気に入り(★)とメモ(📝)はブラウザのlocalStorageに保存されるので、別端末で開く時は「export → import」で同期可能。データの取得範囲(`📅 through YYYY-MM-DD · N papers · fetched ...`)はヘッダに表示されます — `outputs/cvpr2026_tasks.meta.json` をサイドカーで読み込んで描画。
 
 ## クイックスタート
 
@@ -14,12 +14,15 @@ arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類
 uv sync                               # 依存解決
 echo 'OPENAI_API_KEY=sk-...' > .env    # GPT用キー
 
-# 1. fetch → 2. comment分類 → 3. task分類
+# 初回フル: fetch → comment分類 → task分類
 uv run scripts/fetch_arxiv.py "co:cvpr AND co:2026" 1700 -o outputs/cvpr2026.csv
 uv run scripts/enrich_comments.py outputs/cvpr2026.csv         -o outputs/cvpr2026_enriched.csv
 uv run scripts/enrich_tasks.py    outputs/cvpr2026_enriched.csv -o outputs/cvpr2026_tasks.csv
 
-# 4. フロントで閲覧
+# 以降は差分更新 (新規 + 改訂版だけ取り込んで _tasks.csv にマージ + meta 更新)
+scripts/update.sh
+
+# フロントで閲覧
 uv run python -m http.server 8765   # → http://localhost:8765/
 ```
 
@@ -30,10 +33,13 @@ uv run python -m http.server 8765   # → http://localhost:8765/
 | `.env` | `OPENAI_API_KEY` を記載（gitignore済） |
 | `pyproject.toml` / `uv.lock` | uv プロジェクト定義 |
 | `index.html` | 静的フロント（CSVブラウザ） |
-| `scripts/fetch_arxiv.py` | arXiv API → CSV |
+| `scripts/fetch_arxiv.py` | arXiv API → CSV (`--update` で差分モードも) |
 | `scripts/enrich_comments.py` | comment列 → 学会情報 (GPT) |
 | `scripts/enrich_tasks.py` | title+abstract → タスク分類 (GPT) |
-| `outputs/` | 生成CSV置き場（gitignore済） |
+| `scripts/merge_update.py` | 差分_tasks.csv を既存_tasks.csv にマージ (改訂版置換 + 新規append) |
+| `scripts/write_meta.py` | `<csv>.meta.json` サイドカー生成 (カバレッジ情報) |
+| `scripts/update.sh` | 差分fetch → 2回のenrich → merge → meta 更新 を一発で |
+| `outputs/` | 生成CSV置き場（gitignore済）/ `*.meta.json` はビューワーが読む |
 
 ## パイプラインの全体像
 
@@ -50,9 +56,10 @@ uv run python -m http.server 8765   # → http://localhost:8765/
 | 引数 | 説明 | デフォルト |
 |---|---|---|
 | `query` (位置1) | arXiv `search_query` 式 | (必須) |
-| `n` (位置2) | 取得件数（1〜30000） | (必須) |
+| `n` (位置2) | 取得件数（1〜30000）、`--update`時は上限キャップ | (必須) |
 | `-o, --output` | 出力CSVパス | `outputs/arxiv_<query>_<n>.csv` |
 | `--categories` | カンマ区切りカテゴリ（primary_category絞り込み） | `cs.CV,cs.RO,cs.AI,cs.LG` |
+| `--update <CSV>` | 差分モード: 既存CSVを読み、`updated > max(existing.updated)` のみ `sortBy=lastUpdatedDate desc` で取得 | なし |
 
 ### `search_query` フィールドプレフィクス
 
@@ -142,6 +149,36 @@ curl -sS "https://export.arxiv.org/api/query?search_query=co:cvpr+AND+co:2026&ma
 
 ドメイン特化カテゴリ（medical / autonomous-driving / robotics-vla / face-avatar）を技術系（vlm / foundation-model）より優先する設定。当てはまりが弱い場合は `other` に倒し、内容は `task_keywords` 側に出す。
 
+## 差分更新 (`scripts/update.sh`)
+
+初回フル取得を済ませた後は、`scripts/update.sh` で **新着 + 改訂版** だけを取り込んで `_tasks.csv` にマージします。`enrich_*` を全件で再実行する必要が無いのでコストは1〜2桁安く、定常運用はこれで十分。
+
+```bash
+scripts/update.sh                              # cvpr2026 既定
+scripts/update.sh outputs/foo_tasks.csv        # 別CSV対象
+QUERY="co:cvpr AND co:2026" scripts/update.sh  # クエリ変更
+CAP=8000 scripts/update.sh                     # 上限引き上げ (デフォルト5000)
+```
+
+### 内部動作
+
+1. `fetch_arxiv.py --update <既存CSV>` で `sortBy=lastUpdatedDate desc` で取得し、`updated > max(existing.updated)` の境界で停止。出力CSVには **新規 + 改訂版 (v2/v3 等)** の両方が混在。
+2. `enrich_comments.py` → `enrich_tasks.py` を差分CSVに対して実行 (差分が0件なら meta だけ書き換えて exit)。
+3. `merge_update.py` で既存 `_tasks.csv` にマージ:
+   - 改訂版 (既存ID) → その行を置換 (enrich列含めて全列更新)
+   - 新規 → 末尾に append
+4. `write_meta.py` が `<csv>.meta.json` を更新 (`total_rows`, `latest_published`, `latest_updated`, `last_fetched_at`, `query`)。
+5. 元CSVは `*.bak.<timestamp>.csv` にバックアップを残す。
+
+### 改訂版の扱い
+
+arXiv は v1→v2→v3 と改訂されるたび `updated` が更新されるので、本パイプラインは **改訂版検出時に enrich_comments と enrich_tasks の両方を再実行** します。タイトル変更や comment への "Accepted to CVPR 2026" 追記、abstract 改訂などにも追従できる代わりに、改訂版の数だけ GPT コストが追加でかかります (通常は無視できる数)。
+
+### 制限・既知の挙動
+
+- `--update` モードは `published` ではなく `updated` を境界に使うので、既存IDが arXiv で改訂されると差分に乗ります。改訂を取りこぼしたくない要件ならこの挙動が望ましいですが、「純粋な新着だけ欲しい」場合は merge 後に `published > X` でフィルタしてください。
+- カテゴリ外への primary_category 移動は当パイプラインのフィルタ (`cs.CV,cs.RO,cs.AI,cs.LG`) でクライアント側除外されるため、稀に「既存行が更新されないまま残る」ケースがあります。完全な整合が必要なら定期的にフル再取得を回すのが堅い。
+
 ## 規模感とコスト
 
 CVPR 2026 全件 ≒ 約1500件取得時の実績:
@@ -167,12 +204,13 @@ uv run python -m http.server 8765   # → http://localhost:8765/
 
 | 機能 | 内容 |
 |---|---|
-| 検索 | title / abstract / task_summary / task_keywords / comment / authors 横断 |
-| フィルタ | is_cvpr2026=yes only / track / task_primary / modality / has_repo / 著者数レンジ |
+| 検索 | title / abstract / task_summary / task_keywords / comment / authors / メモ 横断 |
+| フィルタ | is_cvpr2026=yes only / track / task_primary / modality / has_repo / favorites only / with notes only / 著者数レンジ |
 | ソート | published, author_count, title（列ヘッダクリックでも切替） |
-| 詳細展開 | 行クリック → abstract / authors / categories / comment / keywords |
+| 詳細展開 | 行クリック → abstract / authors / categories / comment / keywords / **メモ編集** |
 | リンク | 各行から `abs / pdf / repo` |
-| お気に入り(★) | localStorage永続化、JSONエクスポート/インポート。キーは正規化arXiv IDなのでCSV更新後も維持 |
+| カバレッジ表示 | ヘッダに `📅 through YYYY-MM-DD · N papers · fetched ...`。`outputs/cvpr2026_tasks.meta.json` をサイドカーで読み込み |
+| お気に入り(★)・メモ(📝) | localStorage永続化、JSONエクスポート/インポート (★+📝 一括)。キーは正規化arXiv IDなのでCSV更新後も維持 |
 
 依存: **PapaParse** のみ（CDN）。ビルド不要。
 

@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 .claude/
 
-# outputs are gitignored by default; whitelist the published CSV
+# outputs are gitignored by default; whitelist the published CSV + meta sidecar
 outputs/*
 !outputs/cvpr2026_tasks.csv
+!outputs/cvpr2026_tasks.meta.json
