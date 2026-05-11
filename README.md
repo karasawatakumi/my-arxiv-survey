@@ -6,7 +6,13 @@ arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類
 
 **🌐 公開ビューア: https://karasawatakumi.github.io/my-arxiv-survey/**
 
-`outputs/cvpr2026_tasks.csv` をそのまま読み込みます。お気に入り(★)とメモ(📝)はブラウザのlocalStorageに保存されるので、別端末で開く時は「export → import」で同期可能。データの取得範囲(`📅 through YYYY-MM-DD · N papers · fetched ...`)はヘッダに表示されます — `outputs/cvpr2026_tasks.meta.json` をサイドカーで読み込んで描画。
+ビューワーの主な機能:
+
+- **お気に入り(★) / メモ(📝)**: ブラウザの localStorage に永続化、JSON で export/import 可能 (別端末との同期)
+- **検索 + フィルタ**: title / abstract / keywords / メモ 横断検索、track / task / modality / has_repo / 著者数などで絞り込み
+- **行展開**: クリックで abstract / authors / categories / メモエディタを展開
+- **カバレッジ表示**: ヘッダに `📅 through YYYY-MM-DD · N papers · fetched ...` (`outputs/cvpr2026_tasks.meta.json` サイドカーから読み込み)
+- 既定では `outputs/cvpr2026_tasks.csv` を読み込み、`scripts/update.sh` の差分更新にも自動追従
 
 ## クイックスタート
 
