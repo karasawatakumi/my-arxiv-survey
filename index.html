@@ -75,10 +75,18 @@
   .fav-btn.on { color: #f59e0b; }
   th.fav-col, td.fav-col { width: 28px; text-align: center; padding-left: 6px; padding-right: 0; }
 
+  .note-mark { display: inline-block; font-size: 12px; margin-left: 6px; vertical-align: middle; cursor: help; opacity: 0.85; }
+
   header .fav-controls { display: flex; gap: 6px; align-items: center; font-size: 12px; }
   header .fav-controls button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
   header .fav-controls button:hover { background: var(--tag-bg); }
   header .fav-count { color: #f59e0b; font-weight: 500; }
+  header .note-count { color: #2563eb; font-weight: 500; }
+
+  .note-editor { width: 100%; max-width: 900px; min-height: 80px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 13px; line-height: 1.5; resize: vertical; background: #fff; }
+  .note-editor:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+  .note-status { font-size: 11px; color: var(--muted); margin-top: 4px; min-height: 14px; }
+  .note-status.saved { color: #16a34a; }
 
   .detail-grid { display: grid; grid-template-columns: 100px 1fr; gap: 4px 12px; }
   .detail-grid .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
@@ -93,8 +101,9 @@
   <div class="info" id="info">no data loaded</div>
   <div class="fav-controls" style="margin-left:auto">
     <span class="fav-count" id="fav-count">★ 0</span>
-    <button id="export-favs" title="Download favorites as JSON">export</button>
-    <button id="import-favs-btn" title="Import favorites from JSON (merges)">import</button>
+    <span class="note-count" id="note-count">📝 0</span>
+    <button id="export-favs" title="Download favorites & notes as JSON">export</button>
+    <button id="import-favs-btn" title="Import favorites & notes from JSON (merges)">import</button>
     <input type="file" id="import-favs" accept=".json" style="display:none">
   </div>
   <label>
@@ -109,6 +118,9 @@
 
   <h2>favorites</h2>
   <label class="toggle"><input type="checkbox" id="favsonly"> ★ favorites only<span class="count" id="favsonly-count"></span></label>
+
+  <h2>notes</h2>
+  <label class="toggle"><input type="checkbox" id="notesonly"> 📝 with notes only<span class="count" id="notesonly-count"></span></label>
 
   <h2>cvpr 2026 only</h2>
   <label class="toggle"><input type="checkbox" id="cvpr2026only" checked> exclude no/unsure</label>
@@ -169,6 +181,7 @@
 <script>
 const DEFAULT_CSV = 'outputs/cvpr2026_tasks.csv';
 const FAV_KEY = 'arxiv-survey:favorites';
+const NOTES_KEY = 'arxiv-survey:notes';
 
 const state = {
   rows: [],
@@ -176,6 +189,7 @@ const state = {
   expandedId: null,
   sort: 'published-desc',
   favs: new Set(),
+  notes: {},
 };
 
 function normId(id) {
@@ -205,6 +219,40 @@ function toggleFav(r) {
 
 function updateFavCount() {
   $('fav-count').textContent = `★ ${state.favs.size}`;
+}
+
+function loadNotes() {
+  try {
+    const v = JSON.parse(localStorage.getItem(NOTES_KEY) || '{}');
+    state.notes = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  } catch (e) {
+    state.notes = {};
+  }
+}
+
+function saveNotes() {
+  localStorage.setItem(NOTES_KEY, JSON.stringify(state.notes));
+}
+
+function getNote(r) {
+  return state.notes[normId(r.id)] || '';
+}
+
+function setNote(r, text) {
+  const k = normId(r.id);
+  const t = (text || '').trim();
+  if (t) state.notes[k] = t;
+  else delete state.notes[k];
+  saveNotes();
+  updateNoteCount();
+}
+
+function hasNote(r) {
+  return !!state.notes[normId(r.id)];
+}
+
+function updateNoteCount() {
+  $('note-count').textContent = `📝 ${Object.keys(state.notes).length}`;
 }
 
 const $ = id => document.getElementById(id);
@@ -238,12 +286,14 @@ function applyFilters(skip = null) {
   const mods = skip === 'modality' ? [] : checkedValues('modality-checks');
   const hasRepo = skip === 'hasrepo' ? false : $('hasrepo').checked;
   const favsOnly = skip === 'favsonly' ? false : $('favsonly').checked;
+  const notesOnly = skip === 'notesonly' ? false : $('notesonly').checked;
   const cvprOnly = $('cvpr2026only').checked;
   const amin = parseInt($('amin').value, 10);
   const amax = parseInt($('amax').value, 10);
 
   return state.rows.filter(r => {
     if (favsOnly && !isFav(r)) return false;
+    if (notesOnly && !hasNote(r)) return false;
     if (cvprOnly && r.is_cvpr2026 !== 'yes') return false;
     if (tracks.length && !tracks.includes(r.track)) return false;
     if (tasks.length && !tasks.includes(r.task_primary)) return false;
@@ -256,6 +306,7 @@ function applyFilters(skip = null) {
       const hay = [
         r.title, r.summary, r.task_summary, r.task_keywords,
         r.task_secondary, r.comment, r.notes, r.authors,
+        getNote(r),
       ].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -288,6 +339,8 @@ function updateFacetCounts() {
   $('hasrepo-count').textContent = repoBase.filter(r => r.repo_url).length;
   const favBase = applyFilters('favsonly');
   $('favsonly-count').textContent = favBase.filter(r => isFav(r)).length;
+  const noteBase = applyFilters('notesonly');
+  $('notesonly-count').textContent = noteBase.filter(r => hasNote(r)).length;
 }
 
 function applySort(rows) {
@@ -331,11 +384,15 @@ function rowHtml(r) {
   const favCls = isFav(r) ? 'fav-btn on' : 'fav-btn';
   const favChar = isFav(r) ? '★' : '☆';
 
+  const noteMark = hasNote(r)
+    ? `<span class="note-mark" title="${escapeHtml(getNote(r))}">📝</span>`
+    : '';
+
   return `<tr class="row" data-id="${escapeHtml(r.id)}">
     <td class="fav-col"><button class="${favCls}" data-fav="${escapeHtml(r.id)}" title="toggle favorite">${favChar}</button></td>
     <td><span style="font-variant-numeric:tabular-nums">${fmtDate(r.published)}</span></td>
     <td class="title-cell">
-      <div class="title">${escapeHtml(r.title)}</div>
+      <div class="title">${escapeHtml(r.title)}${noteMark}</div>
       <div class="meta">${escapeHtml(r.task_summary || '')}</div>
     </td>
     <td><span class="tag primary">${escapeHtml(r.task_primary || '')}</span>${sec}</td>
@@ -355,6 +412,11 @@ function detailHtml(r) {
       <div class="k">keywords</div><div class="v">${kw}</div>
       <div class="k">comment</div><div class="v">${escapeHtml(r.comment || '')} ${r.notes ? `<span class="tag" style="background:#fef3c7;color:#92400e">${escapeHtml(r.notes)}</span>` : ''}</div>
       <div class="k">abstract</div><div class="v abstract">${escapeHtml(r.summary || '')}</div>
+      <div class="k">📝 note</div>
+      <div class="v">
+        <textarea class="note-editor" data-note-for="${escapeHtml(r.id)}" placeholder="add a personal note... (auto-saves on blur)">${escapeHtml(getNote(r))}</textarea>
+        <div class="note-status" data-note-status-for="${escapeHtml(r.id)}"></div>
+      </div>
     </div>
   </td></tr>`;
 }
@@ -384,7 +446,8 @@ function render() {
 }
 
 function bindRowClicks() {
-  $('tbody').addEventListener('click', e => {
+  const tbody = $('tbody');
+  tbody.addEventListener('click', e => {
     const favBtn = e.target.closest('.fav-btn');
     if (favBtn) {
       const id = favBtn.dataset.fav;
@@ -392,12 +455,33 @@ function bindRowClicks() {
       if (r) { toggleFav(r); render(); }
       return;
     }
+    if (e.target.closest('.note-editor')) return;
+    if (e.target.closest('tr.detail')) return;
     const tr = e.target.closest('tr.row');
     if (!tr) return;
     if (e.target.tagName === 'A') return;
     const id = tr.dataset.id;
     state.expandedId = state.expandedId === id ? null : id;
     render();
+  });
+
+  tbody.addEventListener('input', e => {
+    const ta = e.target.closest('.note-editor');
+    if (!ta) return;
+    const status = document.querySelector(`[data-note-status-for="${CSS.escape(ta.dataset.noteFor)}"]`);
+    if (status) { status.textContent = 'editing…'; status.classList.remove('saved'); }
+  });
+
+  tbody.addEventListener('change', e => {
+    const ta = e.target.closest('.note-editor');
+    if (!ta) return;
+    const id = ta.dataset.noteFor;
+    const r = state.rows.find(row => row.id === id);
+    if (!r) return;
+    setNote(r, ta.value);
+    const status = document.querySelector(`[data-note-status-for="${CSS.escape(id)}"]`);
+    if (status) { status.textContent = 'saved'; status.classList.add('saved'); }
+    updateFacetCounts();
   });
 }
 
@@ -423,15 +507,16 @@ async function loadDefault() {
 
 function exportFavs() {
   const data = {
-    type: 'arxiv-survey-favorites',
+    type: 'arxiv-survey-data',
     exported_at: new Date().toISOString(),
     favorites: [...state.favs],
+    notes: state.notes,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `favorites-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `arxiv-survey-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -441,15 +526,37 @@ function importFavs(file) {
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      const incoming = Array.isArray(data) ? data : data.favorites;
-      if (!Array.isArray(incoming)) throw new Error('invalid format');
-      const before = state.favs.size;
-      incoming.forEach(id => state.favs.add(id));
+      const incomingFavs = Array.isArray(data) ? data : data.favorites;
+      const incomingNotes = (data && typeof data === 'object' && data.notes && typeof data.notes === 'object' && !Array.isArray(data.notes))
+        ? data.notes : {};
+      if (incomingFavs !== undefined && !Array.isArray(incomingFavs)) {
+        throw new Error('invalid format');
+      }
+
+      const favBefore = state.favs.size;
+      (incomingFavs || []).forEach(id => state.favs.add(id));
       saveFavs();
+
+      const noteBefore = Object.keys(state.notes).length;
+      let noteOverwritten = 0;
+      for (const [k, v] of Object.entries(incomingNotes)) {
+        if (typeof v !== 'string' || !v.trim()) continue;
+        if (state.notes[k] && state.notes[k] !== v) noteOverwritten++;
+        state.notes[k] = v;
+      }
+      saveNotes();
+
       updateFavCount();
+      updateNoteCount();
       render();
-      const added = state.favs.size - before;
-      alert(`merged ${added} new favorites (total: ${state.favs.size})`);
+
+      const favAdded = state.favs.size - favBefore;
+      const noteAdded = Object.keys(state.notes).length - noteBefore;
+      const msg = [
+        `★ merged ${favAdded} new favorites (total: ${state.favs.size})`,
+        `📝 merged ${noteAdded} new notes${noteOverwritten ? `, overwrote ${noteOverwritten}` : ''} (total: ${Object.keys(state.notes).length})`,
+      ].join('\n');
+      alert(msg);
     } catch (e) {
       alert('failed to import: ' + e.message);
     }
@@ -459,8 +566,10 @@ function importFavs(file) {
 
 function init() {
   loadFavs();
+  loadNotes();
   updateFavCount();
-  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax', 'favsonly'].forEach(id => {
+  updateNoteCount();
+  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax', 'favsonly', 'notesonly'].forEach(id => {
     $(id).addEventListener('input', render);
   });
   $('sort').addEventListener('change', e => { state.sort = e.target.value; render(); });
@@ -469,6 +578,7 @@ function init() {
     $('cvpr2026only').checked = true;
     $('hasrepo').checked = false;
     $('favsonly').checked = false;
+    $('notesonly').checked = false;
     $('amin').value = ''; $('amax').value = '';
     document.querySelectorAll('aside .checks input').forEach(cb => cb.checked = false);
     state.sort = 'published-desc';
