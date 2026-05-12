@@ -2,7 +2,7 @@
 
 arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類」を抽出して、ブラウザで閲覧/フィルタするパイプライン。
 
-<img width="3450" height="1930" alt="image" src="https://github.com/user-attachments/assets/3935e8d0-870b-4c33-979c-ffbbdd21a435" />
+<img width="1728" height="957" alt="image" src="https://github.com/user-attachments/assets/a60539d1-32cb-4409-bb91-9a6108dba0f6" />
 
 **🌐 公開ビューア: https://karasawatakumi.github.io/my-arxiv-survey/**
 
