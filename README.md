@@ -9,7 +9,7 @@ arXiv論文をクエリで取得し、GPTで「学会情報」「タスク分類
 ビューワーの主な機能:
 
 - **お気に入り(★) / メモ(📝)**: ブラウザの localStorage に永続化、JSON で export/import 可能 (別端末との同期)
-- **🤖 GPT精読**: 詳細展開部のボタンから GPT (gpt-4o-mini) に PDF を精読させて日本語の構造化サマリーを生成。結果は `outputs/deep_reads/<id>.json` に保存され git commit で複数端末から閲覧可能 (要ローカルサーバ起動)
+- **🤖 GPT精読**: 詳細展開部のボタンから GPT (デフォルト gpt-5-mini、UIで gpt-5-nano / gpt-5.4-mini に切替可) に PDF を精読させて日本語の構造化サマリーを生成。結果は `outputs/deep_reads/<id>.json` に保存され git commit で複数端末から閲覧可能 (要ローカルサーバ起動)
 - **検索 + フィルタ**: title / abstract / keywords / メモ 横断検索、track / task / modality / has_repo / 著者数などで絞り込み
 - **行展開**: クリックで abstract / authors / categories / メモエディタ / 精読結果を展開
 - **カバレッジ表示**: ヘッダに `📅 through YYYY-MM-DD · N papers · fetched ...` (`outputs/cvpr2026_tasks.meta.json` サイドカーから読み込み)
@@ -256,9 +256,18 @@ uv run scripts/server.py            # → http://localhost:8765/
 
 ### コストと所要時間
 
-- モデル: `gpt-4o-mini` (PDF input 対応)
-- 1論文あたり: 約 $0.005〜0.01、所要 20〜60秒
+ヘッダのプルダウンで以下から選択 (新規生成・再生成時に適用):
+
+| モデル | 1論文あたりコスト | 備考 |
+|---|---|---|
+| `gpt-5-nano` | ~$0.0005 | 超安価、大量トリアージ向き |
+| `gpt-5-mini` (デフォルト) | ~$0.002 | 指示追従良、推奨 |
+| `gpt-5.4-mini` | ~$0.012 | 高精度寄り、難しい論文用 |
+
+- 所要 20〜60秒/件
 - 再生成: ボタンが `🔁 再生成` に切り替わり、確認ダイアログ後に再呼び出し (上書き)
+- 既存JSONの `model` フィールドには生成時のモデルが記録され、UI で `generated <JST時刻> · model <name>` として表示される
+- **PDF サイズ上限 20MB** (`scripts/deep_read.py` の `MAX_PDF_MB`)。サーバが POST 時に HEAD でサイズチェックし、超えたら HTTP 413 を返す。UI 側で「N MB ですが続行しますか？」確認ダイアログを出し、OK なら `force=true` で再送して強制実行。CLI でも `--force-size` フラグで上書き可能
 
 ### CLI モード
 

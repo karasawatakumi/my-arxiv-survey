@@ -28,7 +28,9 @@ from openai import OpenAI, OpenAIError
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEEP_READ_DIR = os.path.join(REPO_ROOT, "outputs", "deep_reads")
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-5-mini"
+ALLOWED_MODELS = ("gpt-5-nano", "gpt-5-mini", "gpt-5.4-mini")
+MAX_PDF_MB = 20  # Reject huge PDFs before they hit the OpenAI Files API.
 
 SCHEMA = {
     "name": "deep_read_standard_ja",
@@ -90,13 +92,34 @@ SCHEMA = {
 SYSTEM_PROMPT = (
     "あなたはコンピュータビジョン/機械学習の研究者向けに論文を精読して日本語で要約するアシスタントです。"
     "添付されたPDFを精読し、指定された JSON スキーマに厳密に従って構造化サマリーを返してください。\n\n"
-    "厳守事項:\n"
-    "1. すべて日本語で記述する。専門用語は英語のままでよい (例: 'Self-attention', 'NeRF', 'CLIP')。\n"
-    "2. 推測ではなく論文本体の記述にもとづいて書く。値や指標は論文に書かれている数値をそのまま使う。\n"
-    "3. 'key_results' は必ず数値や具体的なベンチマーク名を含める (例: 'ScanNet で IoU +2.3pt 改善', 'A100で 1.7x 高速化')。\n"
-    "4. 'related_work_diff' は具体的な比較対象 (論文名・手法名) を最低1つ挙げる。論文内に明示されている比較を優先する。\n"
-    "5. 不明な点は無理に補完しない。論文に書かれていない場合は 'weaknesses' に '〜は評価されていない' のように書く。\n"
-    "6. 冗長な前置きや結びは入れない。スキーマで指定された情報だけを返す。"
+    "厳守事項:\n\n"
+    "## 1. 表記ルール (最重要)\n"
+    "助詞・動詞・接続詞・一般的な説明文は日本語で書く。ただし以下は **必ず英語のまま** 書き、"
+    "カタカナに置き換えない:\n"
+    "  - 手法名・モデル名・アーキテクチャ名 (e.g. Transformer, ResNet, NeRF, CLIP, ViT)\n"
+    "  - タスク名・問題設定 (e.g. semantic segmentation, person re-identification, "
+    "lifelong learning, domain adaptation)\n"
+    "  - 概念・技術用語 (e.g. attention, fine-tuning, distillation, embedding, backbone, "
+    "self-supervised, semantic drift, catastrophic forgetting, downstream)\n"
+    "  - データセット名・指標名 (e.g. ImageNet, COCO, mAP, IoU, FID, dataset, benchmark)\n"
+    "  - 一般的な ML 用語 (e.g. model, task, parameter, epoch, batch, class, pixel, feature)\n\n"
+    "**悪い例 (カタカナ化禁止)**: セマンティックドリフト, カタストロフィックフォゲッティング, "
+    "ライフロング, アテンション, トランスフォーマー, ファインチューニング, ダウンストリーム, "
+    "バックボーン, ディスティレーション, ロバストネス, ジェネラリゼーション, データセット, "
+    "ベンチマーク, モデル, タスク, パラメータ, エポック, バッチ, クラス, ピクセル, フィーチャ。\n\n"
+    "**良い例 (英語のまま)**: semantic drift, catastrophic forgetting, lifelong, attention, "
+    "Transformer, fine-tuning, downstream, backbone, distillation, robustness, generalization, "
+    "dataset, benchmark, model, task, parameter, epoch, batch, class, pixel, feature。\n\n"
+    "初出時に短い日本語訳を () で添えるのは可: 'lifelong learning (継続学習)'。冗長にしない。\n\n"
+    "## 2. 内容ルール\n"
+    "  - 推測ではなく論文本体の記述にもとづいて書く。値や指標は論文に書かれている数値をそのまま使う。\n"
+    "  - 'key_results' は必ず数値や具体的なベンチマーク名を含める "
+    "(例: 'ScanNet で IoU +2.3pt 改善', 'A100で 1.7x 高速化')。\n"
+    "  - 'related_work_diff' は具体的な比較対象 (論文名・手法名) を最低1つ挙げる。"
+    "論文内に明示されている比較を優先する。\n"
+    "  - 不明な点は無理に補完しない。論文に書かれていない場合は 'weaknesses' に "
+    "'〜は評価されていない' のように書く。\n"
+    "  - 冗長な前置きや結びは入れない。スキーマで指定された情報だけを返す。"
 )
 
 
@@ -147,14 +170,76 @@ def load_cached(arxiv_id: str) -> dict[str, Any] | None:
         return None
 
 
-def _download_pdf(arxiv_id: str, dest_path: str, timeout: float = 90.0) -> None:
+class PdfTooLargeError(RuntimeError):
+    """Raised when an arXiv PDF exceeds MAX_PDF_MB. Caught and surfaced to the UI."""
+
+
+class PdfTooLargeError(RuntimeError):
+    """Raised when an arXiv PDF exceeds MAX_PDF_MB and the caller did not pass
+    ``force_size=True``. Carries ``size_mb`` so the API can surface it to the UI."""
+
+    def __init__(self, message: str, size_mb: float) -> None:
+        super().__init__(message)
+        self.size_mb = size_mb
+
+
+def head_pdf_size_mb(arxiv_id: str, timeout: float = 15.0) -> float | None:
+    """Return PDF size in MB via HEAD request, or None if size can't be determined.
+
+    Used by the API layer to check size before kicking off a worker thread, so
+    that callers can decide to bypass the limit before paying the OpenAI call.
+    """
+    arxiv_id = norm_id(arxiv_id)
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as cli:
+            h = cli.head(url)
+            if h.status_code == 200:
+                cl = h.headers.get("content-length")
+                if cl:
+                    return int(cl) / 1024 / 1024
+    except httpx.HTTPError:
+        pass
+    return None
+
+
+def _download_pdf(
+    arxiv_id: str, dest_path: str, timeout: float = 90.0, force_size: bool = False
+) -> None:
+    url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    max_bytes = MAX_PDF_MB * 1024 * 1024
     with httpx.Client(timeout=timeout, follow_redirects=True) as cli:
+        # HEAD first to fail fast on huge PDFs without wasting bandwidth.
+        if not force_size:
+            try:
+                h = cli.head(url)
+                if h.status_code == 200:
+                    cl = h.headers.get("content-length")
+                    if cl and int(cl) > max_bytes:
+                        size_mb = int(cl) / 1024 / 1024
+                        raise PdfTooLargeError(
+                            f"PDF is {size_mb:.1f}MB, exceeds {MAX_PDF_MB}MB limit "
+                            f"(arxiv:{arxiv_id})",
+                            size_mb=size_mb,
+                        )
+            except PdfTooLargeError:
+                raise
+            except httpx.HTTPError:
+                pass  # HEAD failed — fall through to GET, where we re-check after download.
+
         r = cli.get(url)
         r.raise_for_status()
         ct = r.headers.get("content-type", "")
         if "pdf" not in ct.lower() and not r.content[:4] == b"%PDF":
             raise RuntimeError(f"unexpected content-type for {url}: {ct!r}")
+        # Defensive: re-check after download in case HEAD didn't return content-length.
+        if not force_size and len(r.content) > max_bytes:
+            size_mb = len(r.content) / 1024 / 1024
+            raise PdfTooLargeError(
+                f"PDF is {size_mb:.1f}MB, exceeds {MAX_PDF_MB}MB limit "
+                f"(arxiv:{arxiv_id})",
+                size_mb=size_mb,
+            )
         with open(dest_path, "wb") as f:
             f.write(r.content)
 
@@ -164,13 +249,17 @@ def deep_read(
     *,
     model: str = DEFAULT_MODEL,
     overwrite: bool = False,
+    force_size: bool = False,
     client: OpenAI | None = None,
 ) -> DeepReadResult:
     """Run the full deep-read pipeline for one arxiv id and persist the result.
 
     If ``outputs/deep_reads/<id>.json`` already exists and ``overwrite`` is False,
-    returns the cached result without any API calls.
+    returns the cached result without any API calls. ``force_size=True`` bypasses
+    the MAX_PDF_MB safety check (caller has confirmed they want to run anyway).
     """
+    if model not in ALLOWED_MODELS:
+        raise ValueError(f"model {model!r} not in {ALLOWED_MODELS}")
     arxiv_id = norm_id(arxiv_id)
     os.makedirs(DEEP_READ_DIR, exist_ok=True)
 
@@ -193,7 +282,7 @@ def deep_read(
     tmp_pdf = os.path.join(DEEP_READ_DIR, f".{arxiv_id}.tmp.pdf")
     file_id: str | None = None
     try:
-        _download_pdf(arxiv_id, tmp_pdf)
+        _download_pdf(arxiv_id, tmp_pdf, force_size=force_size)
 
         with open(tmp_pdf, "rb") as fh:
             uploaded = client.files.create(file=fh, purpose="user_data")
@@ -202,6 +291,8 @@ def deep_read(
         last_err: Exception | None = None
         for attempt in range(1, 4):
             try:
+                # Note: GPT-5 family only allows temperature=1 (default), so we don't pass it.
+                # Structured outputs via json_schema guarantee the format regardless.
                 resp = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -223,7 +314,6 @@ def deep_read(
                         },
                     ],
                     response_format={"type": "json_schema", "json_schema": SCHEMA},
-                    temperature=0,
                 )
                 sections = json.loads(resp.choices[0].message.content)
                 break
@@ -261,10 +351,16 @@ def main() -> int:
     p.add_argument("arxiv_id", help="arXiv id (e.g. 2605.05328) or abs/pdf URL")
     p.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model (default: {DEFAULT_MODEL})")
     p.add_argument("--overwrite", action="store_true", help="re-run even if a cached result exists")
+    p.add_argument("--force-size", action="store_true", help=f"bypass {MAX_PDF_MB}MB PDF size limit")
     args = p.parse_args()
 
     try:
-        result = deep_read(args.arxiv_id, model=args.model, overwrite=args.overwrite)
+        result = deep_read(
+            args.arxiv_id,
+            model=args.model,
+            overwrite=args.overwrite,
+            force_size=args.force_size,
+        )
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

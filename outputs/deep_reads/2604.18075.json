@@ -1,0 +1,31 @@
+{
+  "id": "2604.18075",
+  "generated_at": "2026-05-12T13:28:24+00:00",
+  "model": "gpt-5-mini",
+  "sections": {
+    "tldr": "vision-language model (VLM) の domain-class incremental continual learning に対して、token-level に可変な prefix と adapter の重み付けを行う Dynamic Prefix Weighting (DPW) を提案する。主要構成は RePA (reparameterized prefix attention)、CondAct (conditional activation)、および Residual Weighting Mechanism (RWM) で、prefix と adapter を残差的に連携させることで SOTA を達成する。",
+    "problem_motivation": "VLM（例: CLIP）は強力な zero-shot 性能を持つが、downstream の継続学習 (continual learning) では catastrophic forgetting や forward forgetting が問題となる。既存の PEFT 手法（prefix-tuning, adapter, MoE など）はパラメータ効率性を保ちながら適応を行うが、重み付けをサンプルレベル/トークン一律に行うため、トークンごとに必要な調整量が異なる現実を反映できない。さらに attention に基づく既存の prefix スコアは query–key 投影によりトークン間の識別性を損ない、細粒度なトークン重み付けを阻害するという限界がある（論文 p.1–4 を参照）。",
+    "proposed_method": "DPW は token-level に prefix と adapter の重みを動的に割り当てるフレームワークである。入力→処理→出力の主要流れは次の通り。まず RePA (reparameterized prefix attention) で従来の QK⊤ によるスコア計算を単一の affine 変換 S_{XP} = X W^G + B^G に置き換え、prefix に対するトークンごとの task-relevance スコアを直接計算する（p.4–5）。次に CondAct (conditional activation) で sigmoid による gating を行い、条件付き正規化（sum が 1 を超える場合に正規化）と動的フィルタリング（prefix-wise cutoff をサンプル毎に決定）を適用して各トークンの総 prefix 重みを最大 1 に制約しつつ柔軟に調整する（Eq. (8), (9), p.5）。さらに Residual Weighting Mechanism (RWM) では、CondAct による prefix 合計が 1 を超える分を残差として adapter 出力に割り当てる（Eq. (11)、p.5）。adapter は LoRA ベース（共有の down-projection D を凍結し SVD 初期化）を用い、必要なトークンにのみ adapter を適用することで prefix と adapter の補完関係を実現する（p.5, A.4）。最終的に各 head ごとに O_R = O_prefix + O_adapter を出力する（Eq. (12)、p.5）。",
+    "key_results": [
+      "MTIL (Order I, Table 1, p.6): Ours (full) が Transfer=70.4、Avg=79.3、Last=88.3、Mean=79.3 を達成し SOTA。従来手法 DIKI (Mean=76.7) と比べ Mean +2.6pt、GIFT (Mean=77.5) と比べ +1.8pt。",
+      "ODCL-CIL (Table 2, p.6): Ours が Transfer=70.4、Avg=78.6、Last=86.6、Mean=78.5 を達成し SOTA。直近の DPeCLIP (Mean=76.6) と比較して Mean +1.9pt。",
+      "Ablation (Table 3, p.6): ベースライン（RePA/CondAct/RWM なし）で Transfer=68.1, Avg=76.6, Last=85.9。RePA, CondAct, RWM を順次追加すると最終的に Transfer=70.4, Avg=79.3, Last=88.3 となり各モジュールの寄与を示す。",
+      "パラメータ効率 (Table 1, p.6): Ours†（省パラメータ版）で Params=4.6M、Mean=78.7 を達成。参照手法 DIKI は 1.8M、MoE-Adapter は 59.6M、GIFT/ZSCL は 149.6M。",
+      "推論コスト (Table A.3, p.13): MTIL ベンチでの推論時間は Ours が 3m16s、DIKI が 3m46s、MoE-Adapters が 35m47s。性能向上と同時に DIKI より短いレイテンシを示す。"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        "token-level の動的重み付け（RePA + CondAct）によりトークンごとに適切な情報量を注入でき、forward forgetting を緩和して zero-shot 性能を維持しつつ CL に適応可能（p.4–6）。",
+        "prefix と adapter を残差的に連携させる RWM により adapter は必要なトークンにのみ作用し、prefix と補完的な役割を果たすことで性能向上とパラメータ効率を両立（Eq. (11), p.5; A.2–A.4）。",
+        "RePA による query–key の代替は、既存の attention 投影がトークン間の識別性を損なう問題を避けつつ効率的に task-relevance を学習する（Fig. 3, Fig. 5, Table 4, p.5–7）。",
+        "実装面での計算効率にも配慮されており（QK⊤ を affine に置換、router を不要にする設計）、DIKI より短い推論時間を示す（Table A.4, A.3, p.13–14）。"
+      ],
+      "weaknesses": [
+        "最良性能を出す full variant は Params=30.8M と、DIKI (1.8M) に比べて学習可能パラメータが大きく、サイズと性能のトレードオフが残る（Table 1, p.6）。",
+        "評価は CLIP ViT-B/16 を用いた 11 タスクの MTIL/ODCL-CIL ベンチが主体であり、より大規模な VLM（より大きな backbone）や極端に長いタスク列（11 を大きく超える設定）での挙動は論文中で評価されていない（実験設定参照、p.6, C 節）。",
+        "提案手法はいくつかのハイパーパラメータ（例: cutoff の設計や CondAct の閾値）に依存するが、これらの頑健性／最適設定が大規模に検証されているわけではない（Appendix で固定閾値との比較はあるが、すべての設定での感度解析は限定的、A.1）。"
+      ]
+    },
+    "related_work_diff": "本手法は DIKI [32] や MoE-Adapters [45]、ZSCL [49], GIFT [40] と比較されている。DIKI は prefix の重みを入力ごとに正規化して割り当てるが（batch-wise distribution-aware calibration）、DIKI の手法はトークン内での均一化が残り細粒度なトークン重み付けに限界があるのに対し、DPW は RePA と CondAct によりトークン単位で可変な prefix ウェイトを算出し、さらに RWM で prefix の残差を adapter に割り当てる点で異なる（p.1–6）。MoE-Adapters は router による expert ルーティングで adapter 出力を結合するが、各トークンへの出力は一律重み付けされるのに対し、DPW は router を用いずにトークン毎の重み付けを実現し、結果として MTIL（Table 1）で Ours Mean=79.3 が MoE-Adapter Mean=76.9 を上回っている（+2.4pt）。また、GIFT/ZSCL はフルファインチューニングや追加データ合成を利用するが、DPW は PEFT の枠組みでパラメータ効率を保ちながら同等以上の性能を達成している（Table 1, p.6）。"
+  }
+}

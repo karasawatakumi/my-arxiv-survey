@@ -33,8 +33,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from deep_read import (  # noqa: E402
+    ALLOWED_MODELS,
     DEFAULT_MODEL,
+    MAX_PDF_MB,
     deep_read,
+    head_pdf_size_mb,
     load_cached,
     norm_id,
     result_path,
@@ -56,9 +59,9 @@ _jobs_lock = threading.Lock()
 app = FastAPI(title="arxiv-survey local")
 
 
-def _run_job(arxiv_id: str, model: str, overwrite: bool) -> None:
+def _run_job(arxiv_id: str, model: str, overwrite: bool, force_size: bool) -> None:
     try:
-        deep_read(arxiv_id, model=model, overwrite=overwrite)
+        deep_read(arxiv_id, model=model, overwrite=overwrite, force_size=force_size)
         with _jobs_lock:
             _jobs[arxiv_id] = Job(status="done")
     except Exception as e:
@@ -69,19 +72,47 @@ def _run_job(arxiv_id: str, model: str, overwrite: bool) -> None:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "model": DEFAULT_MODEL}
+    return {"ok": True, "default_model": DEFAULT_MODEL, "allowed_models": list(ALLOWED_MODELS)}
 
 
 @app.post("/api/deep-read/{arxiv_id:path}")
-def start_deep_read(arxiv_id: str, overwrite: bool = False) -> JSONResponse:
+def start_deep_read(
+    arxiv_id: str,
+    overwrite: bool = False,
+    model: str = DEFAULT_MODEL,
+    force: bool = False,
+) -> JSONResponse:
     try:
         nid = norm_id(arxiv_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if model not in ALLOWED_MODELS:
+        raise HTTPException(
+            status_code=400, detail=f"model {model!r} not in {list(ALLOWED_MODELS)}"
+        )
 
     cached = load_cached(nid)
     if cached is not None and not overwrite:
         return JSONResponse({"id": nid, "status": "done", "result": cached})
+
+    # Pre-flight PDF size check so the UI can prompt the user before any OpenAI
+    # spend. ``force=true`` bypasses (user has confirmed they want to run anyway).
+    if not force:
+        size_mb = head_pdf_size_mb(nid)
+        if size_mb is not None and size_mb > MAX_PDF_MB:
+            return JSONResponse(
+                {
+                    "id": nid,
+                    "status": "too_large",
+                    "size_mb": round(size_mb, 1),
+                    "limit_mb": MAX_PDF_MB,
+                    "detail": (
+                        f"PDF is {size_mb:.1f}MB, exceeds {MAX_PDF_MB}MB limit. "
+                        f"Re-POST with force=true to run anyway."
+                    ),
+                },
+                status_code=413,
+            )
 
     with _jobs_lock:
         existing = _jobs.get(nid)
@@ -89,8 +120,12 @@ def start_deep_read(arxiv_id: str, overwrite: bool = False) -> JSONResponse:
             return JSONResponse({"id": nid, "status": "running"})
         _jobs[nid] = Job(status="running")
 
+    print(
+        f"[deep-read] start {nid} model={model} overwrite={overwrite} force={force}",
+        flush=True,
+    )
     threading.Thread(
-        target=_run_job, args=(nid, DEFAULT_MODEL, overwrite), daemon=True
+        target=_run_job, args=(nid, model, overwrite, force), daemon=True
     ).start()
     return JSONResponse({"id": nid, "status": "running"}, status_code=202)
 
@@ -108,14 +143,16 @@ def get_deep_read(arxiv_id: str) -> JSONResponse:
     if job and job.status == "running":
         return JSONResponse({"id": nid, "status": "running"})
 
-    cached = load_cached(nid)
-    if cached is not None:
-        return JSONResponse({"id": nid, "status": "done", "result": cached})
-
+    # If the most recent attempt errored, surface that first — otherwise a stale
+    # cached file would mask the failure as a successful (but unchanged) result.
     if job and job.status == "error":
         return JSONResponse(
             {"id": nid, "status": "error", "error": job.error}, status_code=500
         )
+
+    cached = load_cached(nid)
+    if cached is not None:
+        return JSONResponse({"id": nid, "status": "done", "result": cached})
 
     return JSONResponse({"id": nid, "status": "not_started"}, status_code=404)
 

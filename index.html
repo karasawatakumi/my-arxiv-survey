@@ -117,6 +117,9 @@
   header .api-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
   header .api-badge.local { background: #dcfce7; color: #166534; }
   header .api-badge.remote { background: var(--tag-bg); color: var(--muted); }
+  header .dr-model { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+  header .dr-model select { font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 3px; background: #fff; color: var(--text); }
+  header .dr-model.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -124,6 +127,14 @@
   <h1>arXiv Survey</h1>
   <div class="info" id="info">no data loaded</div>
   <span class="api-badge remote" id="api-badge" title="GPT精読の生成APIに接続できません (cache済み結果の閲覧は可能)。お気に入り・メモなど他の機能は通常通り利用できます">🔒 GPT精読 閲覧のみ</span>
+  <label class="dr-model hidden" id="dr-model-wrap" title="GPT精読に使うモデル。新規生成・再生成時にのみ反映されます">
+    model:
+    <select id="dr-model">
+      <option value="gpt-5-nano">gpt-5-nano (~$0.0005/件)</option>
+      <option value="gpt-5-mini">gpt-5-mini (~$0.002/件)</option>
+      <option value="gpt-5.4-mini">gpt-5.4-mini (~$0.012/件)</option>
+    </select>
+  </label>
   <div class="fav-controls" style="margin-left:auto">
     <span class="fav-count" id="fav-count">★ 0</span>
     <span class="note-count" id="note-count">📝 0</span>
@@ -636,6 +647,25 @@ function importFavs(file) {
 // the run/regen button is shown (true) or replaced with a read-only label (false).
 let apiAvailable = false;
 
+const DR_MODEL_KEY = 'arxiv-survey:dr-model';
+const DR_MODEL_DEFAULT = 'gpt-5-mini';
+
+function getSelectedModel() {
+  const sel = $('dr-model');
+  const allowed = sel ? [...sel.options].map(o => o.value) : [];
+  const stored = localStorage.getItem(DR_MODEL_KEY);
+  if (stored && allowed.includes(stored)) return stored;
+  return DR_MODEL_DEFAULT;
+}
+
+function initModelPicker() {
+  const sel = $('dr-model');
+  sel.value = getSelectedModel();
+  sel.addEventListener('change', () => {
+    localStorage.setItem(DR_MODEL_KEY, sel.value);
+  });
+}
+
 async function probeApi() {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2000);
@@ -654,10 +684,12 @@ async function probeApi() {
     badge.className = 'api-badge local';
     badge.textContent = '🤖 GPT精読 利用可';
     badge.title = 'ローカルサーバ稼働中。🤖 GPT精読を生成できます';
+    $('dr-model-wrap').classList.remove('hidden');
   } else {
     badge.className = 'api-badge remote';
     badge.textContent = '🔒 GPT精読 閲覧のみ';
     badge.title = 'GPT精読の生成APIに接続できません (cache済み結果の閲覧は可能)。お気に入り・メモなど他の機能は通常通り利用できます';
+    $('dr-model-wrap').classList.add('hidden');
   }
 }
 
@@ -685,12 +717,25 @@ async function fetchDeepReadStatic(id) {
   }
 }
 
+function fmtJst(isoUtc) {
+  if (!isoUtc) return '';
+  const d = new Date(isoUtc);
+  if (isNaN(d.getTime())) return isoUtc;
+  // 2026/05/12 21:16 JST
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce((m, p) => (m[p.type] = p.value, m), {});
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 function renderDeepRead(cell, payload) {
   const content = cell.querySelector('[data-dr-content]');
   const btn = cell.querySelector('[data-dr-action]');
   const status = cell.querySelector('[data-dr-status]');
   const s = payload.sections || {};
-  const ts = (payload.generated_at || '').slice(0, 16).replace('T', ' ');
+  const ts = fmtJst(payload.generated_at);
   const model = escapeHtml(payload.model || '');
   const sw = s.strengths_weaknesses || {};
 
@@ -712,7 +757,7 @@ function renderDeepRead(cell, payload) {
       </div>
     </div>
     <div class="sec"><h4>関連研究との差分</h4>${p(s.related_work_diff)}</div>
-    <div class="dr-meta">generated ${escapeHtml(ts)} UTC · model ${model}</div>
+    <div class="dr-meta">generated ${escapeHtml(ts)} JST · model ${model}</div>
   `;
   status.textContent = '';
   status.classList.remove('error');
@@ -770,7 +815,11 @@ async function runDeepRead(cell, id, opts = {}) {
   setDeepReadStatus(cell, opts.overwrite ? '再生成リクエスト中…' : 'サーバに問い合わせ中…');
   let resp;
   try {
-    const url = DR_API_PATH(id) + (opts.overwrite ? '?overwrite=true' : '');
+    const params = new URLSearchParams();
+    if (opts.overwrite) params.set('overwrite', 'true');
+    if (opts.force) params.set('force', 'true');
+    params.set('model', getSelectedModel());
+    const url = DR_API_PATH(id) + '?' + params.toString();
     resp = await fetch(url, { method: 'POST' });
   } catch (e) {
     setDeepReadStatus(
@@ -790,6 +839,18 @@ async function runDeepRead(cell, id, opts = {}) {
   if (resp.status === 202 || (body && body.status === 'running')) {
     setDeepReadStatus(cell, '生成中… (初回は30〜60秒かかります)');
     pollDeepRead(cell, id, 0);
+    return;
+  }
+  if (resp.status === 413 && body && body.status === 'too_large') {
+    const msg = `この論文のPDFは ${body.size_mb}MB あります (上限 ${body.limit_mb}MB)。\n`
+      + `そのまま実行するとコスト・時間が通常より大きくなる可能性があります。\n\n`
+      + `続行しますか？`;
+    if (confirm(msg)) {
+      // Retry with force=true. Carry overwrite/opts.force forward.
+      return runDeepRead(cell, id, { ...opts, force: true });
+    }
+    setDeepReadStatus(cell, `キャンセル (PDF ${body.size_mb}MB > ${body.limit_mb}MB)`, true);
+    btn.disabled = false;
     return;
   }
   const msg = (body && (body.detail || body.error)) || `HTTP ${resp.status}`;
@@ -890,6 +951,7 @@ function init() {
     reader.readAsText(f);
   });
   bindRowClicks();
+  initModelPicker();
   // Probe API first so dr-cells render with the correct button state.
   // If the user expands a row before this resolves, the cell will be re-init'd
   // after the probe completes (we clear data-dr-initialized below).
