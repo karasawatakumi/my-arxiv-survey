@@ -93,6 +93,25 @@
   .detail-grid .v { font-size: 13px; }
   .abstract { line-height: 1.55; max-width: 900px; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  .dr-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
+  .dr-btn:hover:not(:disabled) { background: var(--tag-bg); }
+  .dr-btn:disabled { cursor: default; opacity: 0.6; }
+  .dr-btn.regen { font-size: 11px; padding: 2px 8px; color: var(--muted); }
+  .dr-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .dr-status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+  .dr-status.error { color: #b91c1c; }
+  .dr-content { margin-top: 8px; max-width: 900px; }
+  .dr-content .sec { margin-top: 10px; }
+  .dr-content .sec:first-child { margin-top: 0; }
+  .dr-content .sec h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+  .dr-content .sec p { margin: 0; line-height: 1.6; white-space: pre-wrap; }
+  .dr-content .sec ul { margin: 0; padding-left: 1.2em; line-height: 1.6; }
+  .dr-content .sec ul li { margin-bottom: 2px; }
+  .dr-content .sw { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+  @media (max-width: 720px) { .dr-content .sw { grid-template-columns: 1fr; } }
+  .dr-content .sw h5 { margin: 0 0 4px; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .dr-tldr { background: var(--accent-bg); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 0 4px 4px 0; }
 </style>
 </head>
 <body>
@@ -418,6 +437,14 @@ function detailHtml(r) {
         <textarea class="note-editor" data-note-for="${escapeHtml(r.id)}" placeholder="add a personal note... (auto-saves on blur)">${escapeHtml(getNote(r))}</textarea>
         <div class="note-status" data-note-status-for="${escapeHtml(r.id)}"></div>
       </div>
+      <div class="k">🤖 精読</div>
+      <div class="v">
+        <div class="dr-cell" data-dr-for="${escapeHtml(r.id)}">
+          <button class="dr-btn" data-dr-action="run">🤖 GPT精読を実行</button>
+          <div class="dr-status" data-dr-status></div>
+          <div class="dr-content" data-dr-content></div>
+        </div>
+      </div>
     </div>
   </td></tr>`;
 }
@@ -444,6 +471,9 @@ function render() {
     const [k, d] = state.sort.split('-');
     if (th.dataset.sort === k) th.classList.add(d === 'asc' ? 'sort-asc' : 'sort-desc');
   });
+
+  // detail row's dr-cell is rebuilt by tbody.innerHTML — re-init from cache every time
+  document.querySelectorAll('.dr-cell:not([data-dr-initialized])').forEach(initDeepReadCell);
 }
 
 function bindRowClicks() {
@@ -592,6 +622,163 @@ function importFavs(file) {
     }
   };
   reader.readAsText(file);
+}
+
+// ---------- deep-read (GPT精読) ----------
+
+// CSV's r.id is the full abs URL (e.g. "http://arxiv.org/abs/2605.05027v1").
+// normId() preserves the URL form for fav/notes key compatibility. For deep-read
+// we want the bare arxiv id ("2605.05027") so we can address outputs/deep_reads/<id>.json.
+function bareArxivId(raw) {
+  return (raw || '').trim()
+    .replace(/^https?:\/\/arxiv\.org\/(abs|pdf)\//, '')
+    .replace(/^arXiv:/i, '')
+    .replace(/\.pdf$/, '')
+    .replace(/v\d+$/, '');
+}
+
+const DR_STATIC_PATH = id => `outputs/deep_reads/${encodeURIComponent(id)}.json`;
+const DR_API_PATH = id => `/api/deep-read/${encodeURIComponent(id)}`;
+
+async function fetchDeepReadStatic(id) {
+  try {
+    const r = await fetch(DR_STATIC_PATH(id), { cache: 'no-cache' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderDeepRead(cell, payload) {
+  const content = cell.querySelector('[data-dr-content]');
+  const btn = cell.querySelector('[data-dr-action="run"]');
+  const status = cell.querySelector('[data-dr-status]');
+  const s = payload.sections || {};
+  const ts = (payload.generated_at || '').slice(0, 16).replace('T', ' ');
+  const model = escapeHtml(payload.model || '');
+  const sw = s.strengths_weaknesses || {};
+
+  const ul = arr => `<ul>${(arr || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
+  const p = txt => `<p>${escapeHtml(txt || '')}</p>`;
+
+  content.innerHTML = `
+    <div class="sec">
+      <h4>TL;DR</h4>
+      <div class="dr-tldr">${escapeHtml(s.tldr || '')}</div>
+    </div>
+    <div class="sec"><h4>課題・モチベーション</h4>${p(s.problem_motivation)}</div>
+    <div class="sec"><h4>提案手法</h4>${p(s.proposed_method)}</div>
+    <div class="sec"><h4>主要結果</h4>${ul(s.key_results)}</div>
+    <div class="sec"><h4>強み・弱み</h4>
+      <div class="sw">
+        <div><h5>strengths</h5>${ul(sw.strengths)}</div>
+        <div><h5>weaknesses</h5>${ul(sw.weaknesses)}</div>
+      </div>
+    </div>
+    <div class="sec"><h4>関連研究との差分</h4>${p(s.related_work_diff)}</div>
+    <div class="dr-meta">generated ${escapeHtml(ts)} UTC · model ${model}</div>
+  `;
+  status.textContent = '';
+  status.classList.remove('error');
+  btn.textContent = '🔁 再生成';
+  btn.classList.add('regen');
+  btn.dataset.drAction = 'regen';
+  btn.disabled = false;
+}
+
+function setDeepReadStatus(cell, msg, isError = false) {
+  const status = cell.querySelector('[data-dr-status]');
+  status.textContent = msg;
+  status.classList.toggle('error', !!isError);
+}
+
+async function pollDeepRead(cell, id, attempt = 0) {
+  if (attempt > 90) {
+    setDeepReadStatus(cell, '90秒待っても完了しませんでした。サーバログを確認してください。', true);
+    cell.querySelector('[data-dr-action]').disabled = false;
+    return;
+  }
+  await new Promise(r => setTimeout(r, attempt === 0 ? 1500 : 2000));
+  let resp;
+  try {
+    resp = await fetch(DR_API_PATH(id));
+  } catch (e) {
+    setDeepReadStatus(cell, `通信エラー: ${e.message}`, true);
+    cell.querySelector('[data-dr-action]').disabled = false;
+    return;
+  }
+  let body = null;
+  try { body = await resp.json(); } catch (e) {}
+  if (resp.ok && body && body.status === 'done') {
+    renderDeepRead(cell, body.result);
+    return;
+  }
+  if (body && body.status === 'error') {
+    setDeepReadStatus(cell, `生成失敗: ${body.error || '(unknown)'}`, true);
+    cell.querySelector('[data-dr-action]').disabled = false;
+    return;
+  }
+  setDeepReadStatus(cell, `生成中… (${attempt + 1})`);
+  pollDeepRead(cell, id, attempt + 1);
+}
+
+async function runDeepRead(cell, id, opts = {}) {
+  const btn = cell.querySelector('[data-dr-action]');
+  btn.disabled = true;
+  setDeepReadStatus(cell, opts.overwrite ? '再生成リクエスト中…' : 'サーバに問い合わせ中…');
+  let resp;
+  try {
+    const url = DR_API_PATH(id) + (opts.overwrite ? '?overwrite=true' : '');
+    resp = await fetch(url, { method: 'POST' });
+  } catch (e) {
+    setDeepReadStatus(
+      cell,
+      'ローカルサーバに接続できませんでした。`uv run scripts/server.py` を起動してください。',
+      true
+    );
+    btn.disabled = false;
+    return;
+  }
+  let body = null;
+  try { body = await resp.json(); } catch (e) {}
+  if (resp.ok && body && body.status === 'done') {
+    renderDeepRead(cell, body.result);
+    return;
+  }
+  if (resp.status === 202 || (body && body.status === 'running')) {
+    setDeepReadStatus(cell, '生成中… (初回は30〜60秒かかります)');
+    pollDeepRead(cell, id, 0);
+    return;
+  }
+  const msg = (body && (body.detail || body.error)) || `HTTP ${resp.status}`;
+  setDeepReadStatus(cell, `エラー: ${msg}`, true);
+  btn.disabled = false;
+}
+
+async function initDeepReadCell(cell) {
+  if (cell.dataset.drInitialized) return;
+  cell.dataset.drInitialized = '1';
+  const rawId = cell.dataset.drFor;
+  const id = bareArxivId(rawId);
+
+  // 1) Try the static file (works on GH Pages and through the local server's mount).
+  const cached = await fetchDeepReadStatic(id);
+  if (cached) {
+    renderDeepRead(cell, cached);
+  }
+
+  // 2) Wire the button.
+  const btn = cell.querySelector('[data-dr-action]');
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.drAction;
+    if (action === 'regen') {
+      if (!confirm('既存の精読結果を上書きして再生成します。よろしいですか？')) return;
+      runDeepRead(cell, id, { overwrite: true });
+    } else {
+      runDeepRead(cell, id, { overwrite: false });
+    }
+  });
 }
 
 function init() {
