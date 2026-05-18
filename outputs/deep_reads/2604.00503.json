@@ -1,0 +1,32 @@
+{
+  "id": "2604.00503",
+  "generated_at": "2026-05-18T08:48:27+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "PET-DINOはGrounding DINOをベースに、text promptとvisual promptの双方をサポートするユニバーサル検出器。Alignment-Friendly Visual Prompt Generation (AFVPG)とIntra-Batch Parallel Prompting (IBP)および Dynamic Memory-Driven Prompting (DMD)を導入し、少量データでもゼロショット性能を高めつつ開発サイクルとデータ依存を削減する。",
+    "problem_motivation": "Open-Set Object Detection (OSOD)は固定クラスを超える新規カテゴリの認識を要求するが、テキスト表現と視覚概念の整合性の難しさ、長尾カテゴリに対する画像-テキスト対データの不足といった課題がある。大規模なVision-Language Models (VLMs)やテキストプロンプトに依存する既存手法は高性能を実現する一方、専門領域や複雑なオブジェクトでは表現のギャップが生じやすく、長尾カテゴリのデータ不足が性能を制限する。視覚表現にはテキストだけでは捉えきれない情報が含まれており、テキストプロンプトだけに頼る従来法の限界を克服するため、視覚プロンプトの活用と、データ駆動訓練戦略の工夫が有効である。",
+    "proposed_method": "提案手法は以下から構成される。1) Alignment-Friendly Visual Prompt Generation (AFVPG)モジュールにより、 enhanced image features から視覚プロンプト埋め込みを抽出し、テキストプロンプトブランチとパラメータを共有して視覚的手がかりを注入。2) テキストプロンプトルートと視覚プロンプトルートの二路を併用。テキスト側はカテゴリ名を入力テキストとして処理し、テキストエンコーダとFeature Enhancerを通じてテキストプロンプト埋め込みを生成。3) 視覚プロンプトには Exemplar-Guided Route（個別インスタンスの同カテゴリプロンプト）と Global-Concept Route（複数画像からのクラスレベルプロンプト）を導入。6層のインタラクションデコーダで初期クエリを精練。4) Intra-Batch Parallel Prompting (IBP)により同一バッチ内の他画像の視覚 promptsを現在画像のプロンプトとして同時学習、並列に複数のプロンプトルートをモデリング。5) Dynamic Memory-Driven Prompting (DMD)では Visual Cues Bankを用い、エピソードごとに履歴プロンプトを集約・更新してクラスレベルのグローバルプロンプトを強化。これらはGrounding DINOをベースにしており、L = L1 + LGIoU + Lafignment (focal loss)の最適化で学習。3つのプロンプトモードを並行して学習することで、実世界用途の多様なプロンプト経路に対する整合性を高める。ベースは Text Prompt Route、AFVPGで生成される Visual Prompts、Query Selection Moduleを介した初期クエリの配置、6層デコーダによるインスタンスレベルの検出。",
+    "key_results": [
+      "Swin-Tベース/Objects365のみの訓練で、Visual-I経路のゼロショット検出がCOCO AP 64.0、LVIS AP 61.8、ODinW35 AP 38.8を達成（2.5Mデータへ拡張するとCOCO AP 64.3、LVIS AP 64.5、ODinW35 AP 48.3へ改善）",
+      "Visual-G経路ではSwin-T/0.6MでCOCO AP 40.3、LVIS AP 29.6、ODinW35 AP 20.4。2.5Mデータ時はCOCO 38.4、LVIS 31.5、ODinW35 25.5の状況",
+      "Swin-Lバックボーンかつ2.5Mデータでのゼロショット結果は、COCO 66.5、LVIS 65.8、ODinW35 49.7（Visual-I）および COCO 44.3、LVIS 35.7、ODinW35 28.6（Visual-G）へ。",
+      "In-domain評価ではCOCOで PET-DINO が 46.7 AP、LVIS minivalで 65.8 AP、Swin-L時のCOCOで DINOvより +2.1 AP、OpenSeed (Swin-L)との差は約 1.9 AP。",
+      "テキストプロンプト訓練の継承効果では、 pre-trained を利用した PET-DINO-T は COCO 64.0 AP、LVIS 40.3 AP となり、scratch の 62.1 AP / 32.7 AP と比較して顕著な向上。"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        "テキストプロンプトと視覚プロンプトを統合するユニバーサル検出器としての柔軟性（Grounding DINOベース）",
+        "AFVPGにより視覚プロンプトの埋め込みが高品質化され、テキストプロンプトの性能を維持しつつ視覚情報の活用を実現",
+        "IBPとDMDの組み合わせにより複数のプロンプト経路を並行的に最適化可能、視覚プロンプトの多様性とクラス感度を向上",
+        "Visual Cues Bankによる動的・履歴的なプロンプト拡張で、クロスイメージ/グローバルなプロンプトの再利用性を高め、データ効率を改善",
+        " inheritanceベースのプリトレーニングによってデータ不足下でも高い上限を達成し、テキストプロンプト開発の負荷を低減"
+      ],
+      "weaknesses": [
+        "長尾カテゴリ（LVIS等）の一部設定ではT-Rex2等の競合と比べて長尾カテゴリの性能差が生じ得る点が指摘されており、さらなるデータ多様性やCLIP系事前学習の活用が有効となる可能性",
+        "2つのプロンプト路線とメモリバンクを含む複雑な訓練設計の計算コストと実装の複雑さが増大",
+        "各データセットごとにVisual Cues Bankを分離する必要があるなど、ドメイン依存性の管理が課題"
+      ]
+    },
+    "related_work_diff": "本研究は、テキストプロンプトのみのオープンボキャブラリ検出手法（Grounding DINO/GLIP/RegionCLIP/DetClip系）と視覚プロンプトを活用する手法（T-Rex2/CP-DETR/YOLOEなど）のギャップを埋める。従来は大規模VLMやクロスモーダル融合を前提とする多段階訓練に依存するケースが多かったが、PET-DINOはAFVPGで視覚プロンプト埋め込みをテキストプロンプトとパラメータ共有で注入し、IBPとDMDで複数のプロンプトルートを並行的に学習する点が新規。特に、Visual Cues Bankを用いた動的・履歴的プロンプト拡張と、inheritance-based pre-trainingという組み合わせは、データ効率とゼロショット汎化を高めつつ開発サイクルを短縮する点で従来手法と異なる。実験はCOCO/LVIS/ODinWなどの多様なベンチマークで、少量データでも高いゼロショット性能を達成することを示しており、T-Rex2やCP-DETRなどの代表的な比較対象と直接対比できる。"
+  }
+}

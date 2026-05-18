@@ -1,0 +1,32 @@
+{
+  "id": "2605.10349",
+  "generated_at": "2026-05-18T08:24:13+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "Portable Active Learning (PAL) は detector-agnostic なデータ選択フレームワークで、推論出力のみを用いて LIUS（Logistic-based Instance Uncertainty Scoring）と GUIDE（Global Uncertainty & Image Diversity Estimate）を組み合わせ、情報量が高く多様なアノテーション候補を選択する。COCO、PASCAL VOC、BDD100K の複数データセットと複数の検出器で、従来の active learning baselines を一貫して上回る。",
+    "problem_motivation": "大量で高品質な境界ボックスのアノテーションはコストが高く、スケーラビリティを制限する。従来の active learning 法は多くの場合モデル内部の特徴や学習スケジュールの変更を必要とし、導入性が低い。さらに画像レベルの信号、クラス不均衡、インスタンスレベルの不確実性を同時に活用した総合的なサンプル選択は難しい。PAL は検出器内部を変更せず、推論出力だけで動作することで、検出器間の汎用性と実運用適用性を高める。LIUS と GUIDE を組み合わせて、インスタンス不確実性と画像レベルの情報量・多様性を統合的に評価する。PAL はエッジデバイスや多様なデテクタでの適用性を重視している。",
+    "proposed_method": "提案手法 PAL は、データ選択を二段階のスコアリングで行う。まず LIUS（Logistic-based Instance Uncertainty Scoring）で各検出の不確実性を推定する。これは labelled データで各クラスごとに訓練した binary logistic classifier（CLC）を用い、pre-NMS ボックス数と検出信頼度の2つの特徴から true/false positive の境界を学習する。未ラベルデータの検出についてはこの境界に基づき確率 P(Y=1|x) を推定し、Shannon entropy を用いて LIUS(Ij) を算出する。次に GUIDE（Global Uncertainty & Image Diversity Estimate）として、CWIE（Class-Weighted Image Entropy）、RCDI（Rare-Class driven Diversity Index）、RCSP（Rank-Conditioned Similarity Penalty）という3つの画像レベル信号を統合する。最終スコアは Score(I) = α · LIUS(Ij) + γ · RCSP(I) + β · (CWIE(I) + RCDI(I)) の形で算出し、予算内の上位画像を次回アノテーション候補として選ぶ。クラス予算の配分は rc = 1 − 0.5 · (nc,l/Nl + nc,u/Nu) を用い、 bc = min(nc,u, b · (rc / ∑c rc)) の形でクラス別予算を決定する。各クラスごとに上位 2·bc 枚の候補画像を抽出し、最終選択へ回す。LIUS は pre-NMS ボックス数と検出信頼度という2つの特徴だけで true/false の境界を学習・推定するため、モデル内部の変更を要しない。GUIDE は image encoder（Vision Transformer など）を用いた埋め込み表現を活用し、RCSP による画像間の冗長性を抑制する。PAL は検出器の学習・トレーニングパイプラインに依存せず、推論時の出力だけでデータ選択を完結できる。",
+    "key_results": [
+      "COCO で RetinaNet の最終 AL ラウンドにおいて AP@0.5-0.95 が +1.4pt 改善。",
+      "PASCAL VOC で RetinaNet の mAP@0.5 が +0.9 改善。",
+      "BDD100K で RetinaNet の mAP@0.5 が +1.2 改善。",
+      "YOLOX-Tiny では AL ラウンド最終で AP@0.5-0.95 が +1.1 程度改善（Last Round ）。",
+      "PPAL に比べ PAL は COCO で 18.6%、PASCAL VOC で 22.8% の追加アノテーションを節約できる（PPAL 相対、表2）。"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        " detector-agnostic で model/training pipelines に変更不要、容易な導入性と汎用性。",
+        " 推論出力だけを用いるため、複数の detector に跨る適用性が高い。",
+        " LIUS と GUIDE を組み合わせることで、不確実性とデータ多様性の両方を考慮したバランスの良いサンプル選択が可能。",
+        " 複数のデータセット（COCO、PASCAL VOC、BDD100K）と複数のモデルで一貫した改善を実証。"
+      ],
+      "weaknesses": [
+        " LIUS の学習は per-class ロジスティック分類器に依存しており、ラベル付きデータの分布に敏感となる可能性がある。",
+        " GUIDE の効果はエンコーダやデータ分布に依存するため、エンコーダ選択や稀少クラスの表現に影響を受け得る。",
+        " 初期データ設定やハイパーパラメータに依存する面があり、他データセットでの再現性に留意が必要。",
+        " 複雑なイメージエンコーダ（ViT など）の利用による計算オーバーヘッドがある程度生じ得る。"
+      ]
+    },
+    "related_work_diff": "PAL は detector-agnostic かつ inference-driven な点で PPAL とは異なる。PPAL は multi-stage のスコアリングパイプラインを用いており、モデル内部やトレーニングパイプラインへの変更を要する場合が多い。PAL は LIUS と GUIDE という二段階のスコアリングを用い、img-level signals と instance-level uncertainty を統合的に扱う点で差別化される。CoreSet、DivProto、MIAL、LearnLoss、Entropy-based AL など従来の不確実性・多様性・ハイブリッド手法にも言及するが、PAL は検出器に依存せず推論出力のみで機能する点が新規性の核である。"
+  }
+}

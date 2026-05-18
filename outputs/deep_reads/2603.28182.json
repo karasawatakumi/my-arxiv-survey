@@ -1,0 +1,33 @@
+{
+  "id": "2603.28182",
+  "generated_at": "2026-05-18T09:49:50+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "Cross-domain FSOD の課題は訓練サンプル不足とドメインシフトによる最適化の不安定さである。本研究は Hybrid Ensemble Decoder (HED) と Unified Progressive Fine-Tuning framework を提案し、pretrained weights を再利用して多様な予測をアンサンブルすることで generalization を向上させ、Plateau-aware learning rate schedule で安定な最適化を実現した。RF100-VL の 10-shot で average mAP が 41.9 に達し、SAM3 の 35.7 を大きく上回るなど、CD-FSOD/ODinW-13/RF100-VL の複数 benchmark で有効性を示した。",
+    "problem_motivation": "Few-shot object detection (FSOD) は、少数のラベル付きサンプルで新規クラスを検出する課題である。現実データは natural images 以外の工業画像・文書など大きく分布が異なる domain shift が顕著で、事前学習した重みの転移は高性能を提供する一方、下流適応は困難で最適化が不安定になり一般化が低下する。データ生成や拡張に頼る手法は計算コストが高く、ハイパーパラメータ調整にも依存しやすい。そこで本研究は、追加パラメータを増やさず pretrained weights の再利用に基づく軽量な適応手法を探究する。",
+    "proposed_method": "提案手法は二つの柱で構成される。1) Hybrid Ensemble Decoder (HED): DETR 系のデコーダを二段構造化し、最初の K 層で安定したクエリ特徴を生成し、その後の残りの L−K 層を平行に実行する分岐に分ける。各平行分岐は共有パラメータを再利用しつつ、入力として K 層目の出力を取り、トレーニング時には denoising queries をランダムに初期化する input stochasticity を導入して多様性を高め、推論時には全層の出力をアンサンブルして最終予測を得る。denoising queries はトレーニング時のみ適用され、推論コストは増加しない。入力の denoising クエリを τ の確率で再初期化することで多様性を促進する。2) Unified progressive fine-tuning framework: dataset-agnostic なデータ拡張と plateau learning rate scheduler を組み合わせ、少数ショットデータに対して安定的な適応を実現する。具体的にはエンコーダを固定するフェーズと全パラメータを解凍してファインチューニングする二段階の訓練を自動的に切り替える。コードは https://github.com/Intellindust-AI-Lab/FT-FSOD に公開。",
+    "key_results": [
+      "CD-FSOD 1-shot/5-shot/10-shot それぞれの平均 mAP が 34.9 / 45.0 / 47.9 を達成し、SOTA と比較して高水準を維持した（同表に記載された各データセットでの値を含む）。",
+      "ODinW-13 における 1-shot/3-shot/5-shot/10-shot の平均 mAP はそれぞれ 63.1 / 65.8 / 67.6 / 68.6 で、オープンバージョン検出の競合手法と比べて一貫して高い性能を示した。",
+      "RF100-VL における 10-shot の平均 mAP は 41.9 であり、SAM3 の 35.7 を大きく上回った。",
+      "CD-Mixed などの OOD 対応評価では input diversity と HED の組み合わせがオーバー confidence の軽減とロバスト性の向上に寄与することを実証した。",
+      "Code は上記リポジトリに公開されており、再現性を確保している。"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        " pretrained weights の再利用のみで追加パラメータを増やさず高い generalization を実現",
+        " hierarchical + parallel decoders による予測多様性の向上と robustness 向上",
+        " plateau scheduler を含む Unified progressive fine-tuning により大規模データ間でのハイパーパラメータ調整を低減",
+        " OOD robustness の分析を通じて domain shift に対する安定性を実証",
+        " 複数の代表的 FSOD ベンチマーク CD-FSOD / ODinW-13 / RF100-VL で SOTA に近づくか上回る結果"
+      ],
+      "weaknesses": [
+        " ODinW-13 のように zero-shot が既に強力な場合、fine-tuning の改善余地が相対的に小さくなることがある",
+        " 6-parallel の構成など一部のデコーダ設計が必ずしも有効でないケースがある（Ablation で示唆）",
+        " 提案手法は pretrained detectors に依存するため、ベースモデルの品質に敏感な側面がある",
+        " RF100-VL のような大規模データセットではリソース要件が高く、複数 GPU を要する実装が前提になる場合がある（Appendix 参照）"
+      ]
+    },
+    "related_work_diff": "本論文は Domain-RAG、ETS、SAM3、GroundingDINO 1.5 Pro などの大規模 pretrained detectors を比較対象として挙げつつ、open-vocabulary detectors をベースにした FSOD の適応に焦点を当てる点で差別化している。特に Hybrid Ensemble Decoder (HED) による予測の多様性と、Unified progressive fine-tuning による安定化を組み合わせる点が新規であり、CD-FSOD、ODinW-13、RF100-VL の複数 benchmarks において従来の SOTA 手法と比較して強い性能を示している。論文内の直接比較対象には Domain-RAG、ETS、SAM3、GroundingDINO 1.5 Pro などが含まれ、オープンバージョン検出や Cross-domain の文脈での優位性を実証している。"
+  }
+}

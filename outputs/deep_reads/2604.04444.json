@@ -1,0 +1,31 @@
+{
+  "id": "2604.04444",
+  "generated_at": "2026-05-18T08:45:48+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "OVOD の下流ドメイン適応とオープンボキャブラリ汎化のトレードオフを解決する、HSA-DINO というパラメータ効率的なセマンティック増強フレームワーク。Multi-Scale Prompt Bank と Semantic-Aware Router により、事前学習済み OVOD の汎化能力を維持しつつ、下流データの階層的セマンティクスを効果的に取り込む。",
+    "problem_motivation": "従来の open-vocabulary object detection (OVOD) モデルは、一般ドメインで高いゼロショット性能を示す一方、垂直ドメインの下流タスクへ移行すると、カテゴリラベルの語彙が細分化されることやセマンティクスの弱さにより、性能が著しく低下する。大規模な事前学習を活用しているが、下流データのドメイン特性に対応する表現が不足し、vision–language の整合性が崩れやすい。このため、下流データへ適応する際には、汎化能力を損なわずにセマンティクションを補強する方法が求められる。",
+    "proposed_method": "本研究は OV-DINO を基盤とする HSA-DINO を提案する。入力画像 x に対して LoRA を用いて image encoder を微調整可能としつつ、 pre-trained パラメータは凍結する。第一の構成要素 MSPB (Multi-Scale Prompt Bank) は、画像の多段階 feature pyramid の情報を用いてカテゴリラベルに結合するプロンプトをスケールごとに選択・結合することで、階層的な意味表現を強化する。選択された prompts はカテゴリ埋込 t_p に連結され、text encoder に供給されて Et を得る。第二の構成要素 SAR (Semantic-Aware Router) は入力の content と domain information を同時にモデリングし、推論時に domain-specific なセマンティック増強を適用すべきか、元の pre-trained セマンティクスのままにするべきかを動的に決定する。学習時は OV-DINO の損失に加え MSPB のマッチング損失 Lm と正交損失 Lp を導入し、λm, λp で重み付けする。SAR の自動エンコーダは下流データで再構成損失 Lre を用いて content_embedding を推定し、再度 domain statistics を適用して元のドメインへ復元する。訓練は 24 エポック、バッチサイズ 16、LoRA を image encoder に適用、MSPB の bank size N=10, プロンプト長 M=12、3 スケールを用いる。推論時は SAR の推定結果に基づき domain-specific augmentations を適用するか、元の pre-trained セマンティクスを用いるかを選択する。",
+    "key_results": [
+      "OV-COCO+ および下流垂直ドメイン（ArTaxOr/DIOR/UODD）で、HSA-DINO が一貫して最良の性能を達成。例えば ArTaxOr/DIOR/UODD に対して、それぞれ mAP が 52.3/50.1/50.5 となり、次点を 4.3/9.2/1.5 本分上回る。",
+      "ゼロショット設定の OV-DINO から下流データへの適応を示す代表的な例として、ArTaxOr で mAPtgt が 1.4 から 76.8 へ大幅改善し、mAPcoco は 50.6 から 49.9 へほぼ維持（オープンボキャブラリ知識の忘却を抑制）。",
+      " MSPB + SAR の組み合わせは、Predefined + SAR や CoOp + SAR、AttriCLIP + SAR と比較して、Hmean が最大 54.4 を達成（ArTaxOr/DIOR/UODD の平均全体指標）。",
+      "MSPB の有効性は ablation で bank size N=10, prompt length M=12 の組み合わせが最適であること、SAR を使うと general ization と downstream adaptation のバランスが大幅に改善されることを示す。",
+      "推論時のプロンプト選択は、Grad-CAM 等の可視化でも MSPB がより局所的で対象領域に集中したアテンションを生み出すことが確認された。"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        "パラメータ効率的な微調整（LoRA）と新規モジュール（MSPB, SAR）により、事前学習済み OVOD の汎化能力を維持しつつ下流データへ適応できる。",
+        "MSPB が階層的な image semantics を学習・結合することで、視覚-言語の整合性を強化し、下流ドメインでの検出性能を安定的に向上させる。",
+        "SAR による動的ルーティングは domain の影響を抑えつつ適切なセマンティック増強を選択するため、パラメータ更新が汎化能力を崩さない。",
+        "ゼロショットとファインチューニング双方で、general domain と vertical domain のトレードオフを改善する。"
+      ],
+      "weaknesses": [
+        "本手法は複数の追加モジュール（MSPB, SAR, LoRA）を組み合わせるため、実装やハイパーパラメータ調整の複雑さが増す。",
+        "MSPB の bank size、prompt length、λm/λp、τ などのハイパーパラメータ依存性が高く、異なるドメイン間での一般化を保証するには追加のチューニングが必要となる可能性がある。",
+        "ドメイン推定の信頼性は SAR の再構成エラーに依存するため、極端なドメインギャップやノイズの多いデータでは routing が不安定になるリスクがある。"
+      ]
+    },
+    "related_work_diff": "本研究は OVOD の文献と比較され、GLIP/ GroundingDINO/ YOLO-World/ OV-DINO などの事前学習・ダウンストリーム適用モデルと比較されている。特に、下流タスクでの適応とオープンボキャブラリ汎化の両立を狙う点で、ZiRa/ MR-GDINO などの PEFT 手法と比較され、セマンティック増強の階層性とドメイン-aware routing を導入する点が新規性として強調されている。"
+  }
+}

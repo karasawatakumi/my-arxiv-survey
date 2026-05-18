@@ -1,0 +1,33 @@
+{
+  "id": "2605.16080",
+  "generated_at": "2026-05-18T08:28:32+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "ReAlign は reasoning-aligned representation を用いた軽量な AIGI detection フレームワーク。GRPO (Group Relative Policy Optimization) で最適化されたLLM から得た reasoning texts を image-text 対訳表現へ統合する contrastive 学習と分類損失の joint 最適化により、非LLM-based と LLM-based の長所を両立させる。 UltraSynth-10k で 97.09% の overall accuracy、AIGCDetectBenchmark で 96.14%、AIGI-Holmes で 99.44% の高い汎化性能を実現している。",
+    "problem_motivation": "AI生成画像(AIGI) の普及に伴いデジタル真正性の検出が重要となっている。従来の non-LLM-based 手法は低レベルのアーティファクト検出に強い一方で semantical な理解が不足し、LLM-based 手法は高い semantic reasoning を提供するが計算コストが高く low-level アーティファクトへの感度が低いというトレードオフがある。加えて、LLM が出す explanatory reasoning が検出性能にどれだけ寄与するかは十分に解明されていない。そこで本研究は、LLM-generated reasoning texts の intrinsic value を検証し、それを bridge として non-LLM と LLM の長所を組み合わせる統合フレームワークの必要性を提案する。",
+    "proposed_method": "本研究は以下を提案する。1) 高品質な reasoning 表現を抽出するため AIGI-R1 を GRPO で最適化し、 reasoning-text 表現を取得。2) reasoning-text 表現を視覚特徴と整合させるため text-space と visual space を CLIP 基盤で対を成す学習を実施。3) ReAlign は image encoder / text encoder / 検出ヘッドの3部構成で、画像エンコーダは CLIP-ViT-L/14-336 を初期化、text encoder を凍結し、画像エンコーダには LoRA で微調整を行う。4) text-image training pair を作成する際、AIGI-R1 で得た reasoning text を <think>...</think> タグから抽出し、クラスラベル prefix ",
+    "key_results": [
+      "UltraSynth-10k で 97.09% の overall accuracy（全体精度）",
+      "AIGI-Holmes データセットで mean accuracy 99.44% を達成",
+      "AIGCDetectBenchmark で mean accuracy 96.14%（SOTA級の総合性能）",
+      "GRPO で最適化された reasoning-text 表現を用いた高い cross-domain generalization",
+      "高 fidelity な生成モデルに対しても robust な検出性能を維持（例：SD v1.5 / DALLE2 / HunYuan などで 97% 超の精度）"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        "reasoning-text 表現の discriminative 能力と real/fake との強い相関",
+        "Cross-domain Generalization に寄与する textual feature の高い domain invariance",
+        "Semantic-Error Sensitivity により semantically 条件付きの forgery を検出可能",
+        "ReAlign は CLIP ベースの軽量 detector を実現、推論時には reasoning の生成が不要で効率的",
+        "GRPO-optimized AIGI-R1 からの高品質な reasoning テキストを活用して generalization を強化"
+      ],
+      "weaknesses": [
+        "reasoning テキストの質に依存する点（AIGI-R1 の品質に左右される）",
+        "text-image ペア作成には人間の専門家による検証など追加の作業が必要になる場面がある",
+        "現状の評価は特定の AIGI ベンチマークに基づくもので、未知の現実分布への完全な保証は未確立",
+        "LoRA 微調整を用いるが、より大規模なモデルでの適用には追加の設計検討が必要になる可能性がある"
+      ]
+    },
+    "related_work_diff": "本論文は、非LLM-based AIGI detector（例: AIDE [56], PatchCraft [71], UniFD [35] など）と、LLM-based detectors（ForgeryGPT [30], FakeShield [54], MM-IML [14], SIDA [15], LEGION [19], AvatarShield [55] など）の長所・短所を比較し、 reasoning text の表現を bridge として両者のギャップを埋める点を強調している。既存の non-LLM 手法は低レベルの artifacts に敏感だが semantic 理解が不足。一方、LLM-based 手法は semantic reasoning が強いが計算コストが高く低レベルアーティファクトには不敏感になりがちで、説明テキストの寄与も不明確だった。ReAlign は GRPO で最適化された reasoning テキスト表現を CLIP ベースの視覚表現と対認識学習で結びつけ、軽量な detector で高汎化性能を実現する点で従来手法と一線を画す。"
+  }
+}

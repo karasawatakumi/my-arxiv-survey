@@ -1,0 +1,34 @@
+{
+  "id": "2603.17554",
+  "generated_at": "2026-05-18T09:54:10+00:00",
+  "model": "gpt-5-nano",
+  "sections": {
+    "tldr": "PF-RPN は external prompts に依存しない prompt-free な region proposal network で、SIA / CSP / CG-QS の三モジュールにより unseen domain へも高品質な proposals を生成する。5% COCO および 5% ImageNet で学習可能で、downstream への fine-tuning なしに 19 dataset で高汎化性能を実証する。",
+    "problem_motivation": "Open-Vocabulary Object Detection や一般的な物体検出では、従来の手法がカテゴリ名や exemplar に依存する prompt 相当の入力（text prompts や visual prompts）を必要とすることが多く、実世界の多様なドメインに対する適用性が制限される。これらの手法は遅延や計算コスト、外部入力の依存といった課題を伴う。一方、prompt-free な OVD 手法には利点があるものの、メモリ消費や推論遅延が問題となるケースが多い。本論文は、外部 prompts に依存せず、limited data でも cross-domain に強い universal な region proposal を実現する PF-RPN を提案する。PF-RPN は visual embedding をテキストの代理表現として活用し、SIA が多段階の視覚特徴を選択・統合、CSP が自己促進的に埋め込みを cascaded に洗練、CG-QS がクエリ選択を centerness で強化する構成である。さらに 5% COCO + 5% ImageNet での学習でも downstream タスクへ fine-tuning なしで直接適用可能で、19 dataset において zero-shot な汎化性能を実証した。",
+    "proposed_method": "PF-RPN は以下の三つの核モジュールから成る。 1) Sparse Image-Aware Adapter (SIA): 複数階層の feature maps Fi^I を learnable embedding FT と cross-attention で適応的に統合する Mixture-of-Experts (MoE) ベースの router を用い、上位 k 個の情報量の多い特徴階層を選択して FT を更新する。2) Cascade Self-Prompt (CSP): 深い階層から浅い階層へと multi-level features Fi^I を用いて F̃T を反復的に洗練させる。深層から順に cosine 類似度ベースのマスクを生成し、マスクに基づく平均プーリングで埋め込みを更新する (反復回数は3)。3) Centerness-Guided Query Selection (CG-QS): 物体中心近傍のクエリが高品質な proposal を生みやすいという観察を元に、center scoring network による gi と ground-truth から算出される ci を用い centerness loss Lctr を導入。classification スコアと center スコアを組み合わせて最終的なクエリ集合を決定する。学習 objective は L = Lreg + Lcls + Lrt + λ Lctr とし、MoE の過剰活性化を防ぐため w_i の分散を抑える Lrt も導入する。入力画像エンコーダとして ResNet や Swin Transformer を用い、Fi^I は {F1, F2, F3, F4} の多段階特徴を取り扱う。訓練は 5% COCO と 5% ImageNet のデータで行い、Downstream には追加の微調整を必要としない。ODinW13 や CD-FSOD の 19 datasets に対して zero-shot で高い汎化を達成する。",
+    "key_results": [
+      "CD-FSOD で AR100/AR300/AR900 が 60.7/65.3/68.2、ARs/ARm/ARl は 38.5/61.9/80.3 を達成（5% COCO で学習）",
+      "ODinW13 で AR100/AR300/AR900 が 76.5/78.6/79.8、ARs/ARm/ARl は 45.4/71.9/85.8 を達成",
+      "Grounding DINO などの基準手法と比較して CD-FSOD で AR100/AR300/AR900 をそれぞれ +7.8/+11.8/+13.5、ODinW13 で +4.4/+5.2/+5.8 の改善を達成",
+      "YOLOE などの他手法と比較して AR で +16.3/+19.1/+21.1、Qwen2.5-VL-7B には +40.6/+45.2/+48.1 の大幅改善",
+      "Cascade RPN など従来 RPN 系と比べても ODinW13 で +15.6/+13.1/+9.6、CD-FSOD で +?（各指標の主要値を上回る）",
+      "5% COCO および 5% IN のデータ ablation で AR100 が 60.7、AR300 が 65.3、AR900 が 68.2 に達し、データ量を増やすと収穫が頭打ちになることを示唆"
+    ],
+    "strengths_weaknesses": {
+      "strengths": [
+        "external prompts に依存しない Prompt-Free な設計で、テキストエンコーダを必要とせず low-latency な推論を実現",
+        "SIA による多段階の視覚情報の選択と統合により、小物体・非均質領域を含む多様なスケールの object を効果的に Localization",
+        "CSP による deep→shallow への cascade refinement により 背景ノイズを抑制し検出漏れを低減",
+        "CG-QS による centerness に基づくクエリ選択で中心部近傍のクエリを優先、検出品質を向上",
+        "少量データ（5% COCO + 5% IN）で強い cross-domain 汎化を達成し、 downstream への fine-tuning なしで直接適用可能",
+        "他の検出器（Detectors）への組み込みが容易で、推論速度の劣化が小さい（CSP の反復による遅延は微小）"
+      ],
+      "weaknesses": [
+        "完全な新規ドメインに対する限界はまだ検証が必要（大規模な分布シフトに対する安定性は未確定）",
+        "k および λ のハイパーパラメータ依存性が高く、データ量やドメインに応じたチューニングが必要になる可能性",
+        "完全にテキスト無しでのオープンな領域提案を謳うものの、訓練には pseudo-ラベルを用いた前処理があり、極端なドメインでは性能が落ちる場面がある可能性"
+      ]
+    },
+    "related_work_diff": "本手法は Open-Vocabulary Object Detection や prompt-based OVD との対比で、prompt-free な設定を採用している点が大きく異なる。Grounding DINO, GLIP, YOLOE, YOLO World, GenerateU などの従来手法はテキスト prompts や exemplar に依存して高い一般化を狙うが、PF-RPN は視覚特徴のみを用いた learnable embedding をテキスト代理として利用し、外部 prompts を排除する。SIA による多階層特徴の適応的統合、CSP による自己促進的な反復洗練、CG-QS による centerness 基づきのクエリ選択という新機構を組み合わせ、5% COCO + 5% IN という限られたデータで 19 dataset 以上の cross-domain 汎化を実現する点が従来手法と異なる。比較対象として、Grounding DINO [27]、YOLOE [40]、Qwen2.5-VL-7B [2]、Cascade RPN [39] などと実験的に比較され、CD-FSOD および ODinW13 のベンチマークで顕著な AR の改善が報告されている。"
+  }
+}
