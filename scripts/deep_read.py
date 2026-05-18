@@ -159,6 +159,41 @@ def result_path(arxiv_id: str) -> str:
     return os.path.join(DEEP_READ_DIR, f"{arxiv_id}.json")
 
 
+INDEX_PATH = os.path.join(DEEP_READ_DIR, "index.json")
+
+
+def rebuild_index() -> dict[str, dict[str, str]]:
+    """Scan outputs/deep_reads/*.json and rewrite index.json.
+
+    Index format: {"<arxiv_id>": {"model": "...", "generated_at": "..."}}.
+    The frontend reads it once at load to show a 🤖 indicator on rows that
+    already have a cached deep-read, without N HEAD requests.
+    """
+    if not os.path.isdir(DEEP_READ_DIR):
+        return {}
+    entries: dict[str, dict[str, str]] = {}
+    for name in os.listdir(DEEP_READ_DIR):
+        if not name.endswith(".json") or name == "index.json":
+            continue
+        path = os.path.join(DEEP_READ_DIR, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        arxiv_id = data.get("id") or name.removesuffix(".json")
+        entries[arxiv_id] = {
+            "model": data.get("model", ""),
+            "generated_at": data.get("generated_at", ""),
+        }
+    # Atomic write so concurrent generation threads can't read a half-written index.
+    tmp = INDEX_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, sort_keys=True, indent=2)
+    os.replace(tmp, INDEX_PATH)
+    return entries
+
+
 def load_cached(arxiv_id: str) -> dict[str, Any] | None:
     p = result_path(arxiv_id)
     if not os.path.exists(p):
@@ -332,6 +367,10 @@ def deep_read(
         )
         with open(result_path(arxiv_id), "w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+        try:
+            rebuild_index()
+        except OSError:
+            pass
         return result
     finally:
         if file_id is not None:
@@ -348,11 +387,24 @@ def deep_read(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Deep-read an arXiv paper with GPT.")
-    p.add_argument("arxiv_id", help="arXiv id (e.g. 2605.05328) or abs/pdf URL")
+    p.add_argument("arxiv_id", nargs="?", help="arXiv id (e.g. 2605.05328) or abs/pdf URL")
     p.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model (default: {DEFAULT_MODEL})")
     p.add_argument("--overwrite", action="store_true", help="re-run even if a cached result exists")
     p.add_argument("--force-size", action="store_true", help=f"bypass {MAX_PDF_MB}MB PDF size limit")
+    p.add_argument(
+        "--rebuild-index",
+        action="store_true",
+        help="rescan outputs/deep_reads/ and rewrite index.json, then exit",
+    )
     args = p.parse_args()
+
+    if args.rebuild_index:
+        entries = rebuild_index()
+        print(f"wrote {INDEX_PATH} ({len(entries)} entries)")
+        return 0
+
+    if not args.arxiv_id:
+        p.error("arxiv_id is required unless --rebuild-index is given")
 
     try:
         result = deep_read(

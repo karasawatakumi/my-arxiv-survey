@@ -40,6 +40,7 @@ from deep_read import (  # noqa: E402
     head_pdf_size_mb,
     load_cached,
     norm_id,
+    rebuild_index,
     result_path,
 )
 
@@ -170,6 +171,11 @@ def main() -> int:
             file=sys.stderr,
         )
     print("note: deep-read result file is outputs/deep_reads/<id>.json — git-tracked.")
+    try:
+        n = len(rebuild_index())
+        print(f"note: rebuilt deep-read index ({n} entries).")
+    except OSError as e:
+        print(f"warning: could not rebuild deep-read index: {e}", file=sys.stderr)
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
     return 0
 

@@ -76,6 +76,7 @@
   th.fav-col, td.fav-col { width: 28px; text-align: center; padding-left: 6px; padding-right: 0; }
 
   .note-mark { display: inline-block; font-size: 12px; margin-left: 6px; vertical-align: middle; cursor: help; opacity: 0.85; }
+  .dr-mark { display: inline-block; font-size: 12px; margin-left: 4px; vertical-align: middle; cursor: help; opacity: 0.85; }
 
   header .fav-controls { display: flex; gap: 6px; align-items: center; font-size: 12px; }
   header .fav-controls button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); background: #fff; border-radius: 4px; cursor: pointer; }
@@ -158,6 +159,9 @@
   <h2>notes</h2>
   <label class="toggle"><input type="checkbox" id="notesonly"> 📝 with notes only<span class="count" id="notesonly-count"></span></label>
 
+  <h2>gpt精読</h2>
+  <label class="toggle"><input type="checkbox" id="dronly"> 🤖 deep-read only<span class="count" id="dronly-count"></span></label>
+
   <h2>cvpr 2026 only</h2>
   <label class="toggle"><input type="checkbox" id="cvpr2026only" checked> exclude no/unsure</label>
 
@@ -217,6 +221,7 @@
 <script>
 const DEFAULT_CSV = 'outputs/cvpr2026_tasks.csv';
 const DEFAULT_META = 'outputs/cvpr2026_tasks.meta.json';
+const DEEP_READ_INDEX = 'outputs/deep_reads/index.json';
 const FAV_KEY = 'arxiv-survey:favorites';
 const NOTES_KEY = 'arxiv-survey:notes';
 
@@ -227,6 +232,8 @@ const state = {
   sort: 'published-desc',
   favs: new Set(),
   notes: {},
+  // bare arxiv id -> { model, generated_at }. Populated from DEEP_READ_INDEX on load.
+  deepReads: {},
 };
 
 function normId(id) {
@@ -292,6 +299,14 @@ function updateNoteCount() {
   $('note-count').textContent = `📝 ${Object.keys(state.notes).length}`;
 }
 
+function deepReadEntry(r) {
+  return state.deepReads[bareArxivId(r.id)] || null;
+}
+
+function hasDeepRead(r) {
+  return !!deepReadEntry(r);
+}
+
 const $ = id => document.getElementById(id);
 
 function parseCsv(text) {
@@ -324,6 +339,7 @@ function applyFilters(skip = null) {
   const hasRepo = skip === 'hasrepo' ? false : $('hasrepo').checked;
   const favsOnly = skip === 'favsonly' ? false : $('favsonly').checked;
   const notesOnly = skip === 'notesonly' ? false : $('notesonly').checked;
+  const drOnly = skip === 'dronly' ? false : $('dronly').checked;
   const cvprOnly = $('cvpr2026only').checked;
   const amin = parseInt($('amin').value, 10);
   const amax = parseInt($('amax').value, 10);
@@ -331,6 +347,7 @@ function applyFilters(skip = null) {
   return state.rows.filter(r => {
     if (favsOnly && !isFav(r)) return false;
     if (notesOnly && !hasNote(r)) return false;
+    if (drOnly && !hasDeepRead(r)) return false;
     if (cvprOnly && r.is_cvpr2026 !== 'yes') return false;
     if (tracks.length && !tracks.includes(r.track)) return false;
     if (tasks.length && !tasks.includes(r.task_primary)) return false;
@@ -378,6 +395,8 @@ function updateFacetCounts() {
   $('favsonly-count').textContent = favBase.filter(r => isFav(r)).length;
   const noteBase = applyFilters('notesonly');
   $('notesonly-count').textContent = noteBase.filter(r => hasNote(r)).length;
+  const drBase = applyFilters('dronly');
+  $('dronly-count').textContent = drBase.filter(r => hasDeepRead(r)).length;
 }
 
 function applySort(rows) {
@@ -424,12 +443,16 @@ function rowHtml(r) {
   const noteMark = hasNote(r)
     ? `<span class="note-mark" title="${escapeHtml(getNote(r))}">📝</span>`
     : '';
+  const drEntry = deepReadEntry(r);
+  const drMark = drEntry
+    ? `<span class="dr-mark" title="🤖 GPT精読済 · ${escapeHtml(drEntry.model || '?')} · ${escapeHtml(fmtJst(drEntry.generated_at))} JST">🤖</span>`
+    : '';
 
   return `<tr class="row" data-id="${escapeHtml(r.id)}">
     <td class="fav-col"><button class="${favCls}" data-fav="${escapeHtml(r.id)}" title="toggle favorite">${favChar}</button></td>
     <td><span style="font-variant-numeric:tabular-nums">${fmtDate(r.published)}</span></td>
     <td class="title-cell">
-      <div class="title">${escapeHtml(r.title)}${noteMark}</div>
+      <div class="title">${escapeHtml(r.title)}${noteMark}${drMark}</div>
       <div class="meta">${escapeHtml(r.task_summary || '')}</div>
     </td>
     <td><span class="tag primary">${escapeHtml(r.task_primary || '')}</span>${sec}</td>
@@ -571,11 +594,25 @@ async function fetchMeta() {
   }
 }
 
+async function fetchDeepReadIndex() {
+  try {
+    const res = await fetch(DEEP_READ_INDEX, { cache: 'no-cache' });
+    if (!res.ok) return {};
+    const j = await res.json();
+    return (j && typeof j === 'object' && !Array.isArray(j)) ? j : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 async function loadDefault() {
   try {
-    const [csvRes, meta] = await Promise.all([fetch(DEFAULT_CSV), fetchMeta()]);
+    const [csvRes, meta, drIndex] = await Promise.all([
+      fetch(DEFAULT_CSV), fetchMeta(), fetchDeepReadIndex(),
+    ]);
     if (!csvRes.ok) throw new Error('not found');
     const text = await csvRes.text();
+    state.deepReads = drIndex;
     loadData(parseCsv(text), meta);
   } catch (e) {
     $('info').textContent = `default file (${DEFAULT_CSV}) not loaded — use the file picker →`;
@@ -730,6 +767,29 @@ function fmtJst(isoUtc) {
   return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
+// After a freshly-generated deep-read lands, patch state.deepReads and the
+// affected row's title so the 🤖 mark appears without a full re-render
+// (a full render would tear down the expanded detail cell mid-flow).
+function markDeepReadGenerated(bareId, payload) {
+  state.deepReads[bareId] = {
+    model: payload && payload.model || '',
+    generated_at: payload && payload.generated_at || '',
+  };
+  const r = state.rows.find(row => bareArxivId(row.id) === bareId);
+  if (!r) return;
+  const tr = document.querySelector(`tr.row[data-id="${CSS.escape(r.id)}"]`);
+  const titleDiv = tr && tr.querySelector('.title-cell .title');
+  if (titleDiv && !titleDiv.querySelector('.dr-mark')) {
+    const entry = state.deepReads[bareId];
+    const span = document.createElement('span');
+    span.className = 'dr-mark';
+    span.title = `🤖 GPT精読済 · ${entry.model || '?'} · ${fmtJst(entry.generated_at)} JST`;
+    span.textContent = '🤖';
+    titleDiv.appendChild(span);
+  }
+  updateFacetCounts();
+}
+
 function renderDeepRead(cell, payload) {
   const content = cell.querySelector('[data-dr-content]');
   const btn = cell.querySelector('[data-dr-action]');
@@ -798,6 +858,7 @@ async function pollDeepRead(cell, id, attempt = 0) {
   try { body = await resp.json(); } catch (e) {}
   if (resp.ok && body && body.status === 'done') {
     renderDeepRead(cell, body.result);
+    markDeepReadGenerated(id, body.result);
     return;
   }
   if (body && body.status === 'error') {
@@ -834,6 +895,7 @@ async function runDeepRead(cell, id, opts = {}) {
   try { body = await resp.json(); } catch (e) {}
   if (resp.ok && body && body.status === 'done') {
     renderDeepRead(cell, body.result);
+    markDeepReadGenerated(id, body.result);
     return;
   }
   if (resp.status === 202 || (body && body.status === 'running')) {
@@ -911,7 +973,7 @@ function init() {
   loadNotes();
   updateFavCount();
   updateNoteCount();
-  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax', 'favsonly', 'notesonly'].forEach(id => {
+  ['q', 'cvpr2026only', 'hasrepo', 'amin', 'amax', 'favsonly', 'notesonly', 'dronly'].forEach(id => {
     $(id).addEventListener('input', render);
   });
   $('sort').addEventListener('change', e => { state.sort = e.target.value; render(); });
@@ -921,6 +983,7 @@ function init() {
     $('hasrepo').checked = false;
     $('favsonly').checked = false;
     $('notesonly').checked = false;
+    $('dronly').checked = false;
     $('amin').value = ''; $('amax').value = '';
     document.querySelectorAll('aside .checks input').forEach(cb => cb.checked = false);
     state.sort = 'published-desc';
