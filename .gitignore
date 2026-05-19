@@ -9,5 +9,6 @@ __pycache__/
 outputs/*
 !outputs/cvpr2026_tasks.csv
 !outputs/cvpr2026_tasks.meta.json
+!outputs/cvpr2026_trends.md
 !outputs/deep_reads/
 !outputs/deep_reads/*.json
